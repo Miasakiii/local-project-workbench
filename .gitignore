@@ -1,0 +1,40 @@
+# ---- WorkBuddy 文档流水线工作区（工具约定目录，历史产物已归档至 archive/）----
+output/
+outputs/
+
+# ---- AI 工作记忆与本地配置（不进入代码仓库）----
+.workbuddy-ai/
+
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+dist-electron/
+build/
+out/
+release/
+target/
+*.tsbuildinfo
+
+# ---- 日志与临时文件 ----
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+.tmp/
+.cache/
+
+# ---- 环境变量与本地配置 ----
+.env
+.env.local
+.env.*.local
+
+# ---- 操作系统文件 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 编辑器 ----
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/

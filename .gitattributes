@@ -1,0 +1,31 @@
+# 统一行尾：仓库内一律使用 LF，检出时由 Git 按平台处理
+* text=auto eol=lf
+
+# 显式声明二进制文件，避免行尾转换与差异比较损坏内容
+*.docx binary
+*.doc binary
+*.xlsx binary
+*.pptx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.exe binary
+*.dll binary
+*.node binary
+*.zip binary
+
+# 语言与生成文件
+*.md text
+*.ts text
+*.tsx text
+*.js text
+*.json text
+*.yaml text
+*.yml text
+*.css text
+*.html text
