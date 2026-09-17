@@ -29,6 +29,8 @@ interface Session {
   child: IPty
   shell: string
   cwd: string
+  /** 累计接收字节数，仅用于诊断，不保存输出内容 */
+  bytesReceived: number
 }
 
 interface ShellSpec {
@@ -36,8 +38,6 @@ interface ShellSpec {
   args: string[]
 }
 
-/** 内存中保留的回滚行数上限，避免高频输出导致无界增长 */
-const MAX_BUFFERED_CHUNKS = 5_000
 const MIN_DIMENSION = 2
 const MAX_DIMENSION = 1_000
 
@@ -86,7 +86,6 @@ function resolveShell(): ShellSpec {
 
 export class PtySessionManager {
   private readonly sessions = new Map<string, Session>()
-  private readonly pendingChunks = new Map<string, string[]>()
 
   /**
    * 创建会话。
@@ -118,11 +117,14 @@ export class PtySessionManager {
     })
 
     const id = randomUUID()
-    this.sessions.set(id, { id, child, shell: shell.path, cwd })
-    this.pendingChunks.set(id, [])
+    const session: Session = { id, child, shell: shell.path, cwd, bytesReceived: 0 }
+    this.sessions.set(id, session)
 
+    // 输出直接转发给渲染进程，主进程不保留输出内容。
+    // 回滚缓冲由渲染进程的终端组件负责（设计稿 6.2：限制内存中的回滚行数）。
+    // 主进程持有输出副本会在大输出场景下造成无界增长。
     child.onData((data: string) => {
-      this.pushChunk(id, data)
+      session.bytesReceived += data.length
       if (sender.isDestroyed()) return
       const payload: TerminalDataEvent = { sessionId: id, data }
       sender.send(IpcChannel.terminalData, payload)
@@ -130,7 +132,6 @@ export class PtySessionManager {
 
     child.onExit(({ exitCode, signal }) => {
       this.sessions.delete(id)
-      this.pendingChunks.delete(id)
       if (sender.isDestroyed()) return
       const payload: TerminalExitEvent = { sessionId: id, exitCode, signal: signal ?? null }
       sender.send(IpcChannel.terminalExit, payload)
@@ -155,7 +156,6 @@ export class PtySessionManager {
     const session = this.sessions.get(sessionId)
     if (!session) return
     this.sessions.delete(sessionId)
-    this.pendingChunks.delete(sessionId)
     try {
       session.child.kill()
     } catch {
@@ -173,13 +173,8 @@ export class PtySessionManager {
     return this.sessions.size
   }
 
-  /** 限制回滚缓冲，防止高频输出导致无界增长 */
-  private pushChunk(sessionId: string, data: string): void {
-    const chunks = this.pendingChunks.get(sessionId)
-    if (!chunks) return
-    chunks.push(data)
-    if (chunks.length > MAX_BUFFERED_CHUNKS) {
-      chunks.splice(0, chunks.length - MAX_BUFFERED_CHUNKS)
-    }
+  /** 仅用于诊断：指定会话累计接收的字节数 */
+  bytesReceived(sessionId: string): number {
+    return this.sessions.get(sessionId)?.bytesReceived ?? 0
   }
 }
