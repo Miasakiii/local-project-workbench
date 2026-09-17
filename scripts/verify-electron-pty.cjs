@@ -10,6 +10,11 @@
 
 const { app } = require('electron')
 
+// 无显示环境（CI / 沙箱）下 GPU 进程可能反复崩溃并终止整个进程。
+// 本脚本只验证终端能力，不需要 GPU，因此显式禁用。
+app.commandLine.appendSwitch('disable-gpu')
+app.commandLine.appendSwitch('disable-gpu-compositing')
+app.commandLine.appendSwitch('disable-software-rasterizer')
 app.disableHardwareAcceleration()
 
 const TIMEOUT_MS = 15000
