@@ -44,6 +44,8 @@ export interface ProjectViewState {
   relativePath: string
   scrollTop: number
   terminalPanelHeight: number
+  /** 文件页左侧树栏宽度（像素） */
+  filesPaneWidth: number
 }
 
 /** Git 变更分组 */
@@ -73,6 +75,75 @@ export interface GitSnapshot {
   error: string | null
 }
 
+/* ---------- 只读差异（设计稿 5.2） ---------- */
+
+/** 差异的比较对象。未跟踪与冲突文件没有可比基线，各自单独一档。 */
+export type DiffScope = 'unstaged' | 'staged' | 'untracked' | 'conflicted'
+
+export type DiffLineKind = 'context' | 'add' | 'remove' | 'meta'
+
+export interface DiffLine {
+  kind: DiffLineKind
+  /** 旧文件行号；新增行与 meta 行为 null */
+  oldLine: number | null
+  /** 新文件行号；删除行与 meta 行为 null */
+  newLine: number | null
+  text: string
+}
+
+export interface DiffHunk {
+  /** 原始 hunk 标题，例如 `@@ -1,3 +1,4 @@ 说明` */
+  header: string
+  oldStart: number
+  oldCount: number
+  newStart: number
+  newCount: number
+  lines: DiffLine[]
+}
+
+export type DiffFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'unchanged'
+
+/**
+ * 单个文件的只读差异。
+ *
+ * 失败与「无差异」必须分别表达：`error` 非空表示无法判断，不得呈现为「没有变化」。
+ */
+export interface FileDiff {
+  projectId: string
+  relativePath: string
+  scope: DiffScope
+  status: DiffFileStatus
+  /** 二进制文件不提供逐行差异 */
+  binary: boolean
+  /** 重命名时的原路径 */
+  originalPath: string | null
+  hunks: DiffHunk[]
+  addedLines: number
+  removedLines: number
+  /** 差异超过行数上限，已截断 */
+  truncated: boolean
+  /** 未跟踪文件没有 Git 历史基线 */
+  noBaseline: boolean
+  updatedAt: string
+  stale: boolean
+  error: string | null
+}
+
+/* ---------- 文件变化信号（设计稿 5.1／5.3） ---------- */
+
+/**
+ * 文件系统变化信号。
+ * 监听只是刷新信号，**不是事实来源**——事实以重新读取与 Git 查询为准。
+ */
+export interface ProjectChangedEvent {
+  projectId: string
+  /** 变化涉及的相对路径（最多若干条，用于判断当前预览是否需要重载） */
+  paths: string[]
+  /** 是否为批量变化（超出上限时只给汇总，不逐条列出） */
+  bulk: boolean
+  at: string
+}
+
 /** 终端会话：只在本次应用运行期间有效 */
 export interface TerminalSession {
   sessionId: string
@@ -91,4 +162,183 @@ export interface AppInfo {
   nodeVersion: string
   chromeVersion: string
   platform: NodeJS.Platform
+}
+
+/* ---------- README 与预览（设计稿 4.1 / 4.2 / 4.3） ---------- */
+
+/** README 的多语言变体，例如 README.zh-CN.md */
+export interface ReadmeVariant {
+  relativePath: string
+  /** 语言标记，例如 zh-CN；无标记时为 null */
+  locale: string | null
+}
+
+export interface ReadmeDetection {
+  /** 被选中的介绍文件相对路径；未找到为 null */
+  selected: string | null
+  /** 同目录下的多语言变体（不含 selected） */
+  variants: ReadmeVariant[]
+  /** 探测位置 */
+  location: 'root' | 'docs' | '.github' | null
+}
+
+/** 内容被阻止的原因码。界面据此解释「为什么没显示」，不呈现为空白成功页。 */
+export type BlockedReasonCode =
+  | 'unsafe-protocol'
+  | 'remote-resource'
+  | 'outside-project'
+  | 'invalid-path'
+  | 'oversized'
+  | 'unsupported-format'
+  | 'raw-html'
+  | 'unreadable'
+
+export interface BlockedNotice {
+  kind: 'image' | 'link' | 'tag' | 'comment'
+  /** 被阻止的原始目标 */
+  target: string
+  reason: BlockedReasonCode
+  /** 面向用户的中文说明 */
+  message: string
+}
+
+/** 渲染结果。`html` 已通过白名单净化与自审，`violations` 非空时不得采用。 */
+export interface MarkdownDocument {
+  projectId: string
+  relativePath: string
+  html: string
+  /** 需按需加载的项目内图片相对路径 */
+  assets: string[]
+  /** 已获授权的外部图片地址；渲染进程据此决定是否加载 */
+  remoteAssets: string[]
+  /** 项目内链接（点击后在应用内跳转，不发起导航） */
+  projectLinks: string[]
+  blocked: BlockedNotice[]
+  externalLinkCount: number
+  sourceBytes: number
+  /** 文件超过文本预览阈值，内容已截断 */
+  truncated: boolean
+  /** 净化自审违规项；非空表示输出不可信 */
+  violations: string[]
+}
+
+export type AssetReadStatus = 'ok' | 'too-large' | 'unsupported-format' | 'blocked' | 'unreadable'
+
+export interface AssetReadResult {
+  status: AssetReadStatus
+  relativePath: string
+  mime: string | null
+  /** data URL；仅 status 为 ok 时存在 */
+  dataUrl: string | null
+  bytes: number
+  message: string | null
+}
+
+/* ---------- 文件操作（设计稿第 7 章） ---------- */
+
+/** 文件操作失败原因。界面据此给出具体说明，不呈现为统一成功或统一失败。 */
+export type FileOperationReason =
+  | 'untrusted-project'
+  | 'protected-entry'
+  | 'outside-project'
+  | 'invalid-path'
+  | 'not-found'
+  | 'permission-denied'
+  | 'in-use'
+  | 'read-only'
+  | 'trash-unavailable'
+  | 'io-error'
+
+export type FileOperationStatus = 'ok' | 'failed' | 'skipped'
+
+/** 单项操作结果。批量操作必须逐项给出，避免静默部分失败。 */
+export interface FileOperationItem {
+  relativePath: string
+  status: FileOperationStatus
+  reason: FileOperationReason | null
+  message: string
+}
+
+export interface DeleteEntriesResult {
+  items: FileOperationItem[]
+  ok: number
+  failed: number
+  skipped: number
+  /** 整批中止（未执行项已标记为 skipped） */
+  aborted: boolean
+  abortReason: FileOperationReason | null
+  abortMessage: string | null
+}
+
+/* ---------- 项目库与文件浏览（设计稿 2.1 / 2.2 / 4.2） ---------- */
+
+/**
+ * 项目摘要：界面使用的项目视图对象。
+ * `available` 为运行时判定结果，不是持久化字段——目录可能被移动或删除。
+ */
+export interface ProjectSummary {
+  id: string
+  displayName: string
+  /** 用户选择时的原始路径 */
+  originalPath: string
+  /** 规范化身份（真实路径），用于去重与重新定位 */
+  normalizedIdentity: string
+  /** 简介：用户填写优先，其次 README 首段 */
+  description: string | null
+  descriptionSource: 'user' | 'readme' | 'path'
+  readmePath: string | null
+  pinned: boolean
+  lastOpenedAt: string
+  trusted: boolean
+  /** true 是仓库，false 不是，null 表示 Git 不可用或尚未探测 */
+  isGitRepository: boolean | null
+  available: boolean
+  unavailableReason: string | null
+}
+
+export type FileEntryKind = 'file' | 'directory'
+
+export interface FileEntry {
+  name: string
+  relativePath: string
+  kind: FileEntryKind
+  size: number
+  modifiedAt: string
+  /** 符号链接或目录联接 */
+  isLink: boolean
+}
+
+export interface FileListResult {
+  relativePath: string
+  /** 面包屑：从项目根到当前目录 */
+  breadcrumb: Array<{ name: string; relativePath: string }>
+  entries: FileEntry[]
+  /** 条目数超过上限，列表已截断 */
+  truncated: boolean
+  error: string | null
+}
+
+export type PreviewKind = 'markdown' | 'text' | 'code' | 'image' | 'unsupported' | 'error'
+
+export interface FilePreview {
+  kind: PreviewKind
+  relativePath: string
+  name: string
+  /** 代码语言标识；非代码为 null */
+  language: string | null
+  /** 纯文本内容（text／code） */
+  text: string | null
+  /** 高亮后的 HTML（code，已转义） */
+  highlightedHtml: string | null
+  /** Markdown 渲染结果 */
+  markdown: MarkdownDocument | null
+  /** 图片资源结果 */
+  image: AssetReadResult | null
+  size: number
+  /** 是否因超过阈值而截断 */
+  truncated: boolean
+  /** 行数，仅代码／文本有值 */
+  lineCount: number | null
+  /** 无法预览时的说明 */
+  message: string | null
 }

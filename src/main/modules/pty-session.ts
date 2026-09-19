@@ -26,6 +26,7 @@ import type {
 
 interface Session {
   id: string
+  projectId: string
   child: IPty
   shell: string
   cwd: string
@@ -89,10 +90,12 @@ export class PtySessionManager {
 
   /**
    * 创建会话。
-   * 不信任渲染进程传入的启动目录：必须是真实存在且可访问的目录。
+   *
+   * 启动目录由主进程解析后传入（渲染进程只提供「项目 ID + 相对路径」），
+   * 此处再做一次存在性与类型复核，作为纵深防御。
    */
-  create(sender: WebContents, request: TerminalCreateRequest): TerminalCreateResult {
-    const cwd = request.cwd
+  create(sender: WebContents, request: TerminalCreateRequest, resolvedCwd: string): TerminalCreateResult {
+    const cwd = resolvedCwd
     if (typeof cwd !== 'string' || cwd.length === 0) {
       throw new Error('启动目录不能为空')
     }
@@ -117,7 +120,14 @@ export class PtySessionManager {
     })
 
     const id = randomUUID()
-    const session: Session = { id, child, shell: shell.path, cwd, bytesReceived: 0 }
+    const session: Session = {
+      id,
+      projectId: request.projectId,
+      child,
+      shell: shell.path,
+      cwd,
+      bytesReceived: 0
+    }
     this.sessions.set(id, session)
 
     // 输出直接转发给渲染进程，主进程不保留输出内容。
