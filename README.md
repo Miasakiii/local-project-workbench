@@ -241,6 +241,74 @@ Biome 自带解析器、不依赖 `typescript` 包，可一并承担静态检查
 
 ---
 
+## 分发体积
+
+打包配置见 `electron-builder.yml`。裁剪原则是**只删除在 Windows x64 上不可能被加载的文件**，
+不为体积牺牲任何功能路径。
+
+| 裁剪项 | 裁剪前 | 裁剪后 | 依据 |
+|---|---|---|---|
+| node-pty 调试符号（`.pdb`） | 54 MB | 0 | 运行时永不加载 |
+| node-pty 非目标平台预编译产物 | 32 MB | 0 | 只发 Windows x64（含 arm64 的 ConPTY 运行时） |
+| Electron 语言包 | 49 MB（55 个） | 1.1 MB（2 个） | 界面为简体中文，保留 zh-CN / en-US |
+| 已被 Vite 打包的前端依赖 | 17 MB | 0 | react / react-dom / xterm 已进 `out/renderer`，故移至 devDependencies |
+
+**实测结果：解包 327.9 MB**（未裁剪时的投影值为 398.9 MB）。
+
+体积构成（实测）：
+
+| 项 | 体积 | 占比 |
+|---|---|---|
+| `本地项目工作台.exe`（Chromium + Node） | 234.9 MB | 71.6% |
+| `dxcompiler.dll` | 24.6 MB | 7.5% |
+| `LICENSES.chromium.html` | 19.5 MB | 6.0% |
+| `resources.pak` | 11.9 MB | 3.6% |
+| `icudtl.dat` | 10.4 MB | 3.2% |
+| `resources/`（app.asar 1.8 MB + 解包的 node-pty 5.6 MB） | 7.5 MB | 2.3% |
+| `vk_swiftshader.dll` | 5.3 MB | 1.6% |
+| 其余（d3dcompiler / ffmpeg / dxil / pak / locales） | 11.8 MB | 3.6% |
+
+**明确保留、不裁剪的项：**
+
+| 项 | 体积 | 保留原因 |
+|---|---|---|
+| `dxcompiler.dll` / `dxil.dll` | 26 MB | WebGPU(Dawn) 与 D3D12 着色器编译。本应用不用 WebGPU，但 GPU 进程初始化可能依赖；本机为软件渲染环境，无法验证硬件 GPU 路径 |
+| `vk_swiftshader.dll` / `vulkan-1.dll` | 6.2 MB | 无可用 GPU 时的软件渲染兜底 |
+| `ffmpeg.dll` | 3 MB | 媒体解码 |
+| `chrome_200_percent.pak` | 1.2 MB | HiDPI 缩放 |
+| `LICENSES.chromium.html` | 19.5 MB | Chromium 第三方许可证，属分发合规要求 |
+
+若把 `dxcompiler.dll` / `dxil.dll` 一并裁掉可再减 26 MB，但需先在真实 GPU 的机器上确认
+GPU 进程不受影响才能采用——本环境不具备该条件，故默认保留。
+
+**语言包的裁剪方式：** 不用 electron-builder 的 `electronLanguages`（它先把 55 个语言包
+全量复制进产物、再逐个删掉 53 个），而是由 `scripts/prepare-electron-dist.cjs` 预先生成
+一份只含所需语言包的运行时目录，打包时直接使用（`electronDist`）。少一轮 49 MB 的写入与删除，
+结果也更确定。该脚本用硬链接共享大文件，准备过程几乎不占额外磁盘。
+
+**node-pty 无需 electron-rebuild**（M0-1 已验证：它是 N-API 模块，产物与 Electron ABI 无关），
+因此配置中显式设 `npmRebuild: false`。保留默认行为会在缺少 Spectre 缓解库的机器上直接构建失败，
+而重建本身毫无必要。
+
+**Electron 发行包走国内镜像**（`electronDownload.mirror`）：直连 GitHub Releases 在部分网络下
+会长时间无响应，表现为打包静默卡住。
+
+```bash
+npm run pack:dir         # 打出未压缩安装目录到 release/win-unpacked
+npm run measure:pack     # 测量真实产物体积与构成
+npm run verify:packaged  # 在打包产物上做端到端验证（CDP 驱动）
+npm run verify:release   # 上面三步串起来
+npm run pack:win         # 生成 NSIS 安装包（需 NSIS 工具链）
+```
+
+**打包产物的验证方式：** `verify:packaged` 用远程调试协议（CDP）从外部驱动打包后的应用，
+不依赖应用内部任何测试钩子，因此能覆盖只有打包才会暴露的问题。当前 9 项全部通过：
+启动并渲染、预加载白名单桥可用、沙箱完整（无 `require` / `process` / `ipcRenderer`）、
+样式表从 asar 加载、项目库与文件树可用、**裁剪后的 node-pty 确实可用**（实际拉起
+PowerShell 并收到输出）、中文文案正常、无致命错误输出。
+
+---
+
 ## 环境基线
 
 - Windows 10 / 11（目标平台）
