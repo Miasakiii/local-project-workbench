@@ -305,7 +305,14 @@ npm run pack:win         # 生成 NSIS 安装包（需 NSIS 工具链）
 不依赖应用内部任何测试钩子，因此能覆盖只有打包才会暴露的问题。当前 9 项全部通过：
 启动并渲染、预加载白名单桥可用、沙箱完整（无 `require` / `process` / `ipcRenderer`）、
 样式表从 asar 加载、项目库与文件树可用、**裁剪后的 node-pty 确实可用**（实际拉起
-PowerShell 并收到输出）、中文文案正常、无致命错误输出。
+交互式 shell 并收到输出）、中文文案正常、无致命错误输出。
+
+**安装包体积尚未实测。** `npm run pack:win` 在本机跑不通，原因不在项目配置：
+electron-builder 在 Windows 上会用 PowerShell 包装包管理器调用来收集生产依赖
+（`app-builder-lib` 的 `nodeModulesCollector`），本机环境不允许该派生，依赖树收集
+因此拿不到任何输出而失败。按已实测的压缩比（gzip 41.9%）推算，安装包约
+**135–140 MB**——这是投影值而非实测值，需在可正常派生 PowerShell 的机器上执行
+`npm run pack:win` 确认。
 
 ---
 
