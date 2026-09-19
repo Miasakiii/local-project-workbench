@@ -1,0 +1,364 @@
+/* ---------- 项目页 ---------- */
+
+.project-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 18px;
+  background: rgba(246, 246, 248, 0.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--separator);
+  flex-wrap: wrap;
+}
+
+.project-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.project-identity h1 {
+  font-size: 16px;
+}
+
+.project-path {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  max-width: 52vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-badges {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.project-badges button.chip {
+  cursor: pointer;
+  padding: 2px 9px;
+  box-shadow: none;
+}
+
+/* ---------- 应用骨架：侧边栏 + 主区域 ---------- */
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 每个已打开的项目占一个槽位；隐藏的槽位不参与布局，但组件保持挂载 */
+.project-slot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-slot.hidden {
+  display: none;
+}
+
+/* ---------- 项目侧边栏 ---------- */
+
+.sidebar {
+  width: 208px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--separator);
+  overflow: hidden;
+  transition:
+    width 200ms var(--ease),
+    opacity 140ms var(--ease),
+    border-right-width 200ms var(--ease);
+}
+
+/* 收起：宽度归零并隐藏内容，内部控件同时退出 Tab 顺序。
+   注意边框也要收起——仅改颜色仍会占 1px 宽度。 */
+.sidebar.collapsed {
+  width: 0;
+  border-right-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 12px 12px 6px;
+  flex: none;
+}
+
+.sidebar-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.sidebar-filter {
+  padding: 0 10px 6px;
+  flex: none;
+}
+
+.sidebar-filter input {
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+/* 顶部汇总：有几个项目的终端正在运行 */
+.sidebar-running {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 10px 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-size: 11.5px;
+  flex: none;
+}
+
+.sidebar-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  transition: background 120ms var(--ease);
+}
+
+.sidebar-item:hover {
+  background: rgba(0, 0, 0, 0.045);
+}
+
+.sidebar-item.active {
+  background: var(--accent-soft);
+}
+
+.sidebar-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.sidebar-item-main:hover:not(:disabled),
+.sidebar-item-main:active:not(:disabled) {
+  background: transparent;
+}
+
+.sidebar-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.sidebar-item.active .sidebar-item-name {
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+
+.sidebar-mark {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-3);
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.sidebar-mark.live {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+/* 状态点：空心＝未打开，实心灰＝已打开无会话，绿色脉冲＝终端会话运行中 */
+.sidebar-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: transparent;
+}
+
+.sidebar-dot.on {
+  border-color: var(--text-3);
+  background: var(--text-3);
+}
+
+.sidebar-dot.running {
+  border-color: transparent;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.16);
+  animation: sidebar-pulse 2s ease-in-out infinite;
+}
+
+/* 顶部汇总的指示点：与列表项的状态点用不同类名，
+   避免按 `.sidebar-dot.running` 统计时把汇总点也算进去 */
+.sidebar-summary-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.16);
+  animation: sidebar-pulse 2s ease-in-out infinite;
+}
+
+@keyframes sidebar-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.sidebar-item-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-right: 5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 50%;
+  opacity: 0;
+  transition:
+    opacity 120ms var(--ease),
+    background 120ms var(--ease);
+}
+
+.sidebar-item:hover .sidebar-item-close,
+.sidebar-item-close:focus-visible {
+  opacity: 1;
+}
+
+.sidebar-item-close:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text);
+}
+
+.sidebar-empty {
+  margin: 6px 4px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.sidebar-library {
+  flex: none;
+  margin: 8px;
+  text-align: left;
+  font-size: 12.5px;
+}
+
+.sidebar-library.active {
+  background: var(--accent-soft);
+  border-color: rgba(0, 122, 255, 0.28);
+  color: var(--accent-strong);
+}
+
+/* ---------- 分段控件（项目页页面切换） ---------- */
+
+.segmented {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  background: rgba(0, 0, 0, 0.055);
+  border-radius: var(--radius-sm);
+}
+
+.segmented button {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 3px 13px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  transition:
+    background 140ms var(--ease),
+    color 140ms var(--ease);
+}
+
+.segmented button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+.segmented button.active {
+  background: #ffffff;
+  color: var(--text);
+  font-weight: 550;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.library-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.project-content {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 18px 22px 22px;
+  background: var(--bg-content);
+}

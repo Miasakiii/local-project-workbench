@@ -1,0 +1,284 @@
+/* ---------- 文件浏览器 ---------- */
+
+.file-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.browser-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.breadcrumb button {
+  padding: 2px 7px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--radius-xs);
+  color: var(--text-2);
+}
+
+.breadcrumb button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text);
+}
+
+.breadcrumb .sep {
+  color: var(--text-3);
+}
+
+.browser-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.browser-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* ---------- 尺寸拖拽手柄 ---------- */
+
+.resize-handle {
+  flex: none;
+  position: relative;
+  touch-action: none;
+  outline: none;
+  transition: background 120ms var(--ease);
+}
+
+.resize-handle:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* 拖拽中禁止选中文本，并保持光标形态 */
+body.is-resizing-y,
+body.is-resizing-y * {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
+
+body.is-resizing-x,
+body.is-resizing-x * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* 终端面板上边缘：一条细抓取条，悬停时高亮中缝 */
+.terminal-resize {
+  height: 6px;
+  cursor: ns-resize;
+  background: #2c2c2e;
+  border-top: 1px solid rgba(0, 0, 0, 0.5);
+}
+
+.terminal-resize::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 40px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  transform: translateX(-50%);
+  transition: background 120ms var(--ease);
+}
+
+.terminal-resize:hover::after,
+.terminal-resize:focus-visible::after {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+/* 分栏分隔线：落在两栏之间，悬停时显示系统蓝细线 */
+.split-resize {
+  width: 10px;
+  cursor: col-resize;
+}
+
+.split-resize::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  transform: translateX(-50%);
+  transition: background 120ms var(--ease);
+}
+
+.split-resize:hover::after,
+.split-resize:focus-visible::after {
+  background: var(--accent);
+}
+
+/* ---------- 文件树（Finder 列表视图） ---------- */
+
+.file-tree {
+  flex: none;
+  overflow: auto;
+  background: var(--bg-content);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding-bottom: 8px;
+}
+
+.tree-head {
+  display: grid;
+  grid-template-columns: 1fr 72px 148px;
+  gap: 8px;
+  padding: 6px 15px 6px 50px;
+  border-bottom: 1px solid var(--separator);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: saturate(180%) blur(12px);
+  z-index: 1;
+}
+
+.tree-head .col-size,
+.tree-head .col-time {
+  text-align: right;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 0 5px;
+  padding-right: 10px;
+  border-radius: var(--radius-xs);
+  transition: background 100ms var(--ease);
+}
+
+.tree-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.tree-row.selected {
+  background: var(--accent-soft);
+}
+
+.tree-row.selected:hover {
+  background: var(--accent-soft-hover);
+}
+
+.twisty {
+  flex: none;
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.twisty:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--text-2);
+}
+
+.twisty.placeholder {
+  background: transparent;
+  cursor: default;
+}
+
+.twisty .chevron {
+  transition: transform 150ms var(--ease);
+}
+
+.twisty.expanded .chevron {
+  transform: rotate(90deg);
+}
+
+.tree-label {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 15px 1fr 72px 148px;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  text-align: left;
+  font-size: 13px;
+  height: 24px;
+}
+
+.tree-label:hover:not(:disabled),
+.tree-label:active:not(:disabled) {
+  background: transparent;
+}
+
+.tree-label:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.tree-label .glyph {
+  display: block;
+}
+
+.tree-label .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row.selected .name {
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+
+.tree-label .size,
+.tree-label .time {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-note {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.tree-note.error {
+  color: var(--danger);
+}

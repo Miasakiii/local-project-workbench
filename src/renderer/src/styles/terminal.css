@@ -1,0 +1,202 @@
+/* ---------- 终端面板 ---------- */
+
+.terminal-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: #1c1c1e;
+  color: #e5e5e7;
+  min-height: 0;
+}
+
+/* 收起时面板整体不参与布局，但终端组件保持挂载，会话不终止 */
+.terminal-panel.closed {
+  display: none;
+}
+
+.terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: rgba(44, 44, 46, 0.96);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-wrap: wrap;
+}
+
+.terminal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.terminal-title strong {
+  font-weight: 590;
+}
+
+.terminal-title code {
+  color: #98989d;
+}
+
+.terminal-panel .chip {
+  background: rgba(255, 255, 255, 0.09);
+  color: #b9b9bf;
+}
+
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-actions button {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e5e5e7;
+  box-shadow: none;
+}
+
+.terminal-actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.terminal-actions button.danger {
+  color: #ff8a80;
+}
+
+.terminal-actions button.danger:hover:not(:disabled) {
+  background: rgba(255, 59, 48, 0.18);
+}
+
+.terminal-notice {
+  margin: 0;
+  padding: 6px 12px;
+  background: rgba(255, 149, 0, 0.16);
+  color: #f0c37a;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.terminal-tabs {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  padding: 0 8px;
+  background: #23262a;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  overflow-x: auto;
+}
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  margin-top: 3px;
+  border-radius: 6px 6px 0 0;
+}
+
+.terminal-tab.active {
+  background: #1c1c1e;
+}
+
+.terminal-tab-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 4px 6px 4px 10px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: #98989d;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-tab.active .terminal-tab-label {
+  color: #e5e5e7;
+}
+
+.terminal-tab-label:hover:not(:disabled) {
+  background: transparent;
+  color: #e5e5e7;
+}
+
+.tab-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid #6b6b70;
+}
+
+.tab-dot.live {
+  border-color: transparent;
+  background: #34c759;
+}
+
+.terminal-tab-close {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: #6b6b70;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 50%;
+  opacity: 0;
+  transition:
+    opacity 120ms var(--ease),
+    background 120ms var(--ease);
+}
+
+.terminal-tab:hover .terminal-tab-close,
+.terminal-tab.active .terminal-tab-close,
+.terminal-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.terminal-tab-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #e5e5e7;
+}
+
+.terminal-tab-add {
+  flex: none;
+  width: 24px;
+  margin: 3px 0 3px 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: #98989d;
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 6px;
+}
+
+.terminal-tab-add:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #e5e5e7;
+}
+
+.terminal-host-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 6px 6px;
+}
+
+.terminal-host-wrap.hidden {
+  display: none;
+}
+
+.terminal-host {
+  width: 100%;
+  height: 100%;
+}

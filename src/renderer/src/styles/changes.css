@@ -1,0 +1,285 @@
+/* ---------- 概览与变更 ---------- */
+
+.overview-view,
+.changes-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* 变更页为左右分栏，需要确定高度才能让两栏各自滚动 */
+.changes-view {
+  height: 100%;
+}
+
+.overview-toolbar,
+.changes-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex: none;
+}
+
+.readme-meta,
+.changes-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.readme-actions,
+.changes-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.variant-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.variant-switch button.active {
+  background: var(--accent-soft);
+  border-color: rgba(0, 122, 255, 0.28);
+  color: var(--accent-strong);
+}
+
+.file-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.file-picker.inline {
+  margin-top: 0;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+/* ---------- 变更页：分组列表 + 差异 ---------- */
+
+.changes-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+}
+
+.changes-list {
+  flex: none;
+  width: 320px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.change-group {
+  background: var(--bg-content);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 10px;
+}
+
+.change-group header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.change-group header strong {
+  font-weight: 590;
+  font-size: 12.5px;
+}
+
+.change-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change-group li {
+  margin: 1px 0;
+}
+
+.change-file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--radius-xs);
+  text-align: left;
+  transition: background 110ms var(--ease);
+}
+
+.change-file:hover:not(:disabled),
+.change-file:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.change-file.active,
+.change-file.active:hover {
+  background: var(--accent-soft);
+}
+
+.change-file-name {
+  font-size: 12.5px;
+}
+
+.change-file.active .change-file-name {
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+
+.change-file-path {
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 差异视图 ---------- */
+
+.diff-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-content);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.diff-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  border: 1px solid var(--separator);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.diff-hunks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.diff-hunk {
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.diff-hunk-header {
+  padding: 4px 10px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--separator);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diff-lines {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 46px 46px 16px 1fr;
+  align-items: baseline;
+  white-space: pre;
+}
+
+.diff-line .diff-gutter {
+  padding-right: 8px;
+  text-align: right;
+  font-size: 11px;
+  color: #b0b0b6;
+  user-select: none;
+}
+
+.diff-line .diff-marker {
+  text-align: center;
+  user-select: none;
+}
+
+.diff-line .diff-text {
+  padding-right: 12px;
+  overflow-x: auto;
+}
+
+.diff-line.add {
+  background: rgba(52, 199, 89, 0.13);
+}
+
+.diff-line.add .diff-marker {
+  color: #1c7c3f;
+}
+
+.diff-line.remove {
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.diff-line.remove .diff-marker {
+  color: var(--danger);
+}
+
+.diff-line.meta {
+  background: var(--bg-subtle);
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.diff-stat {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.diff-stat-add {
+  color: #1c7c3f;
+}
+
+.diff-stat-remove {
+  color: var(--danger);
+}

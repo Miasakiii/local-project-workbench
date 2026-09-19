@@ -86,7 +86,8 @@ M1／M2 的全部实现已于 2026-09-19 纳入版本历史，并完成一次实
 │  ├─ preload/             白名单桥接层（不暴露原始 ipcRenderer）
 │  ├─ renderer/            React 界面
 │  │  ├─ pages/            项目库、项目首页
-│  │  └─ components/       项目侧边栏、文件树、预览、差异、终端、尺寸手柄等
+│  │  ├─ components/       项目侧边栏、文件树、预览、差异、终端、尺寸手柄等
+│  │  └─ styles/           样式表按页面／组件拆分；styles.css 为 @import 入口
 │  └─ shared/              IPC 契约与数据对象类型
 ├─ scripts/                验证脚本与 TS 加载钩子（不参与打包）
 ├─ docs/

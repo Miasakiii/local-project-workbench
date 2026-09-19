@@ -1,0 +1,101 @@
+/*
+ * 视觉风格：参考 macOS / Finder。
+ *
+ * 三条取舍：
+ * 1. 中性色靠冷灰（#f5f5f7 / #1d1d1f），分隔线用半透明黑而非实色灰，
+ *    这样在深浅背景上都有「发丝线」的观感。
+ * 2. 强调色统一为系统蓝 #007aff 系；选中态用低透明度填充而非高饱和实色，
+ *    避免大面积色块破坏列表的阅读节奏。
+ * 3. 圆角、阴影、过渡统一走变量，保持整机一致。
+ */
+
+:root {
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'Cascadia Mono', Consolas, 'Courier New', monospace;
+
+  --bg-window: #f5f5f7;
+  --bg-sidebar: #f0f0f3;
+  --bg-content: #ffffff;
+  --bg-subtle: #f7f7f9;
+  --bg-field: rgba(0, 0, 0, 0.045);
+  --bg-field-focus: #ffffff;
+
+  --separator: rgba(0, 0, 0, 0.07);
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.16);
+
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #8e8e93;
+
+  --accent: #007aff;
+  --accent-strong: #0062cc;
+  --accent-soft: rgba(0, 122, 255, 0.13);
+  --accent-soft-hover: rgba(0, 122, 255, 0.19);
+  --focus-ring: 0 0 0 3.5px rgba(0, 122, 255, 0.32);
+
+  --danger: #d70015;
+  --danger-soft: rgba(255, 59, 48, 0.1);
+  --warn: #a05a00;
+  --warn-soft: rgba(255, 149, 0, 0.12);
+  --ok: #1c7c3f;
+  --ok-soft: rgba(52, 199, 89, 0.14);
+  --violet: #6b3fbf;
+  --violet-soft: rgba(120, 80, 200, 0.12);
+
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-2: 0 2px 10px rgba(0, 0, 0, 0.08);
+  --shadow-3: 0 18px 50px rgba(0, 0, 0, 0.22);
+
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-window);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 覆盖式细滚动条，接近 macOS 的观感 */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.34);
+  background-clip: content-box;
+}
