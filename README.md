@@ -10,6 +10,9 @@
 
 **阶段：M0 技术验证、M1 项目登记与只读浏览、M2 变化感知与终端均已交付；下一步 M3 文件操作与交付。**
 
+M1／M2 的全部实现已于 2026-09-19 纳入版本历史，并完成一次实施审计与修正
+（含引入静态检查工具链、主进程 IPC 按域拆分），详见[推进计划 § 8](docs/plan/推进计划-v1.md)。
+
 | 状态 | 事项 |
 |---|---|
 | 已完成 | 设计讨论稿 **v0.4**（实施基线；M0–M2 的实施偏差已回写） |
@@ -67,11 +70,14 @@
 .
 ├─ README.md
 ├─ package.json            工程、依赖与验证入口
+├─ biome.json              静态检查与格式化配置（Biome）
 ├─ electron.vite.config.ts 构建配置
 ├─ tsconfig*.json          类型检查配置（主进程 / 渲染进程分离）
 ├─ src/
 │  ├─ main/                Electron 主进程（特权服务）
-│  │  ├─ index.ts          窗口、IPC 注册、调用来源校验
+│  │  ├─ index.ts          应用生命周期、窗口、进程级服务装配
+│  │  ├─ ipc/              按域拆分的 IPC 通道（guard / app / projects / files /
+│  │  │                    git / system / terminal）；来源校验在 guard.ts
 │  │  ├─ security/         路径解析与归属复核（path-guard）
 │  │  ├─ storage/          元数据原子写入与损坏容错（json-store）
 │  │  └─ modules/          project-registry / file-access / file-browser /
@@ -169,7 +175,7 @@
 ## 验证
 
 ```bash
-npm run verify:all          # 类型检查 + M0 + M1 + M2 + 端到端（推荐）
+npm run verify:all          # 静态检查 + 类型检查 + 构建 + M0 + M1 + M2 + 端到端（推荐）
 ```
 
 各套件可单独运行：
@@ -198,8 +204,37 @@ npm run verify:all          # 类型检查 + M0 + M1 + M2 + 端到端（推荐�
   只服务验证脚本，不参与打包。
 - 需要真实 Electron 的脚本采用父/子进程模式：部分环境会注入 `ELECTRON_RUN_AS_NODE=1`，
   父进程显式清除该变量后再派生 Electron，子进程自检运行模式并明确失败。
+- `smoke:m1` 在运行前断言 `out/` 产物不早于 `src/`：产物陈旧时直接失败，
+  避免「验证通过」实际测到的是旧代码。`verify:all` 已内含构建步骤。
 - 已知问题 I-1：node-pty 在会话退出清理阶段输出 `AttachConsole failed` 堆栈，
-  已定位为噪音级，不影响会话关闭与进程树清理。
+  已定位为噪音级，不影响会话关闭与进程树清理，也不会改变验证脚本的退出码。
+
+### 静态检查与格式化
+
+```bash
+npm run lint         # 静态检查（未使用变量、Hook 依赖、无障碍规则等）
+npm run lint:fix     # 自动修复可修复项
+npm run format       # 按统一风格重排源码
+npm run check        # 静态检查 + 格式化 + 导入顺序（最严格口径）
+```
+
+**选型说明：** TypeScript 7 的 Go 重写不再暴露编译器 API（`ts.createSourceFile`、
+`ts.SyntaxKind` 等已移除），typescript-eslint 因此无法在本项目工作
+（[typescript-eslint#12518](https://github.com/typescript-eslint/typescript-eslint/issues/12518)）。
+Biome 自带解析器、不依赖 `typescript` 包，可一并承担静态检查、格式化与导入顺序，
+故取代 ESLint + Prettier。风格参数与既有代码保持一致：2 空格缩进、单引号、
+不加分号、不加尾逗号、行宽 120。
+
+少数规则与项目既有决策冲突，已在 `biome.json` 或就地抑制注释中写明理由：
+
+| 规则 | 处理 | 理由 |
+|---|---|---|
+| `complexity/useLiteralKeys` | 关闭 | 对不可信 JSON 与环境变量使用 `obj['key']` 是刻意的可读性标记 |
+| `complexity/noImportantStyles` | 关闭 | 拖拽态需要覆盖任意后代的 `cursor` / `user-select` |
+| `a11y/useSemanticElements` | 关闭（仅 ResizeHandle） | 尺寸手柄不是水平分隔线，`<hr>` 会丢失拖拽语义 |
+| `useExhaustiveDependencies` | 就地抑制 4 处 | 均为刻意的「触发依赖」：效果体只读 ref，但必须在输入变化后重跑 |
+| `security/noDangerouslySetInnerHtml` | 就地抑制 2 处 | 内容由主进程净化层产出并自审，净化层永不写出原始 `src` / `href` |
+| `suspicious/noArrayIndexKey` | 就地抑制 4 处 | 条目无稳定标识且文案可重复，索引参与复合键是唯一可靠选择 |
 
 ---
 
