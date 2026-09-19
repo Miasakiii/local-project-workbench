@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react'
 import type { ProjectSummary } from '@shared/types'
+import { useCallback, useMemo, useState } from 'react'
 import { SidebarIcon } from '../components/icons'
 
 interface LibraryPageProps {
@@ -17,7 +17,8 @@ interface LibraryPageProps {
  * 项目库首页（设计稿 2.1，M1-2）。
  *
  * 规则：
- * - 默认启动页即本页；「恢复上次项目」为可选开关（C09，M2 实现）。
+ * - 默认启动页即本页；「恢复上次项目」为可选开关（C09），但该开关尚未实现，
+ *   因此启动后始终停留在本页。
  * - 卡片简介优先用户填写，其次 README 首段，最后回退路径。
  * - 目录不可用时卡片明确标注，仍可移除登记或重新定位。
  * - 移除登记**不删除磁盘文件**，确认框里明确说明。
@@ -104,6 +105,7 @@ export function LibraryPage({
       </header>
 
       {notice !== null ? (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: 提示条点击即关闭。改为可聚焦控件会引入新的焦点态，而当前环境无法人工确认视觉效果（见 P4）；键盘可达性一并在 M3 交互专项处理
         <p className="inline-notice" onClick={() => setNotice(null)}>
           {notice}
         </p>
@@ -112,9 +114,7 @@ export function LibraryPage({
       {projects.length === 0 && !loading ? (
         <div className="empty-state">
           <h2>还没有登记任何项目</h2>
-          <p>
-            项目停留在原来的位置，不会被复制或上传。应用只记录它的位置，用于快速打开、阅读 README 与启动终端。
-          </p>
+          <p>项目停留在原来的位置，不会被复制或上传。应用只记录它的位置，用于快速打开、阅读 README 与启动终端。</p>
           <div className="empty-actions">
             <button type="button" className="primary" onClick={() => void onRegister()} disabled={registerBusy}>
               登记第一个项目
@@ -132,10 +132,7 @@ export function LibraryPage({
 
       <div className="project-grid">
         {filtered.map((project) => (
-          <article
-            key={project.id}
-            className={project.available ? 'project-card' : 'project-card unavailable'}
-          >
+          <article key={project.id} className={project.available ? 'project-card' : 'project-card unavailable'}>
             <header>
               <div className="card-title">
                 <h2 title={project.displayName}>{project.displayName}</h2>

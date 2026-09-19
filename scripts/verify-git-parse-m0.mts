@@ -29,11 +29,7 @@ const checks: Array<[string, boolean, string]> = [
   ['分支名解析', branch === 'main', `branch=${String(branch)}`],
   ['含空格的中文路径', find('普通 文件.txt', 'unstaged'), '普通 文件.txt → unstaged'],
   ['已暂存分组', find('已暂存.txt', 'staged'), '已暂存.txt → staged'],
-  [
-    '同一文件双重状态',
-    find('双重状态.txt', 'staged') && find('双重状态.txt', 'unstaged'),
-    'staged 与 unstaged 各一条'
-  ],
+  ['同一文件双重状态', find('双重状态.txt', 'staged') && find('双重状态.txt', 'unstaged'), 'staged 与 unstaged 各一条'],
   ['未跟踪分组', find('未跟踪 文件.md', 'untracked'), '未跟踪 文件.md → untracked'],
   ['冲突分组', find('冲突.txt', 'conflicted'), '冲突.txt → conflicted'],
   [

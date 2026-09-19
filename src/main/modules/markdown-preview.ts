@@ -1,15 +1,15 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname } from 'node:path'
-import { resolveProjectPath, type PathRejection } from '../security/path-guard'
+import type { AssetReadResult, BlockedNotice, MarkdownDocument, ReadmeDetection, ReadmeVariant } from '@shared/types'
+import { type PathRejection, resolveProjectPath } from '../security/path-guard'
 import { parseMarkdown } from './markdown-parse'
-import { firstParagraphText, sanitizeMarkdown, type BlockedReason, type LinkDecision, type ImageDecision } from './markdown-sanitize'
-import type {
-  AssetReadResult,
-  BlockedNotice,
-  MarkdownDocument,
-  ReadmeDetection,
-  ReadmeVariant
-} from '@shared/types'
+import {
+  type BlockedReason,
+  firstParagraphText,
+  type ImageDecision,
+  type LinkDecision,
+  sanitizeMarkdown
+} from './markdown-sanitize'
 
 /**
  * Markdown 预览模块（设计稿 4.1 / 4.2 / 4.3）。
@@ -173,7 +173,9 @@ function resolveTarget(
   projectRoot: string,
   previewDirectory: string,
   target: string
-): { ok: true; relativePath: string; absolutePath: string } | { ok: false; rejection: PreviewRejection; detail: string } {
+):
+  | { ok: true; relativePath: string; absolutePath: string }
+  | { ok: false; rejection: PreviewRejection; detail: string } {
   const trimmed = target.trim()
   const withoutSuffix = stripUrlSuffix(trimmed)
   const decoded = safeDecode(withoutSuffix)
@@ -209,7 +211,12 @@ function buildPolicy(
   const resolveLink = (target: string): LinkDecision => {
     const trimmed = target.trim()
     if (trimmed.length === 0) {
-      notices.push({ kind: 'link', target, reason: 'invalid-path', message: describeBlockedReason('invalid-path', target) })
+      notices.push({
+        kind: 'link',
+        target,
+        reason: 'invalid-path',
+        message: describeBlockedReason('invalid-path', target)
+      })
       return { kind: 'blocked', reason: 'invalid-path' }
     }
     if (trimmed.startsWith('#')) return { kind: 'anchor', href: trimmed }
@@ -274,7 +281,11 @@ function buildPolicy(
           })
           return { kind: 'blocked', reason: 'remote-resource' }
         }
-        const host = safeDecode(trimmed).replace(/^https?:\/\//i, '').split('/')[0]?.split(':')[0] ?? ''
+        const host =
+          safeDecode(trimmed)
+            .replace(/^https?:\/\//i, '')
+            .split('/')[0]
+            ?.split(':')[0] ?? ''
         if (policy.allowedImageHosts.length > 0 && !policy.allowedImageHosts.includes(host.toLowerCase())) {
           notices.push({
             kind: 'image',
@@ -285,7 +296,8 @@ function buildPolicy(
           return { kind: 'blocked', reason: 'remote-resource' }
         }
         return { kind: 'remote', url: trimmed }
-      }      notices.push({
+      }
+      notices.push({
         kind: 'image',
         target,
         reason: 'unsafe-protocol',
@@ -484,7 +496,11 @@ export function renderMarkdownFile(request: RenderRequest): MarkdownDocument {
     expect: 'file'
   })
   if (!resolution.ok || resolution.absolutePath === null) {
-    return empty(request.relativePath, [], describeRejection(resolution.rejection ?? 'invalid-path', request.relativePath))
+    return empty(
+      request.relativePath,
+      [],
+      describeRejection(resolution.rejection ?? 'invalid-path', request.relativePath)
+    )
   }
 
   let size = 0
@@ -505,11 +521,7 @@ export function renderMarkdownFile(request: RenderRequest): MarkdownDocument {
     const buffer = readFileSync(resolution.absolutePath)
     source = buffer.subarray(0, TEXT_PREVIEW_LIMIT_BYTES).toString('utf8')
   } catch (error) {
-    return empty(
-      resolution.normalized,
-      [],
-      `无法读取文件：${error instanceof Error ? error.message : String(error)}`
-    )
+    return empty(resolution.normalized, [], `无法读取文件：${error instanceof Error ? error.message : String(error)}`)
   }
 
   // 预览基准目录为文件所在目录，符合 Markdown 相对路径语义

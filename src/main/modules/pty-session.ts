@@ -1,10 +1,6 @@
-import { existsSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import type { WebContents } from 'electron'
-import * as pty from 'node-pty'
-import type { IPty } from 'node-pty'
-import { IpcChannel } from '@shared/ipc'
 import type {
   TerminalCreateRequest,
   TerminalCreateResult,
@@ -13,6 +9,10 @@ import type {
   TerminalResizeRequest,
   TerminalWriteRequest
 } from '@shared/ipc'
+import { IpcChannel } from '@shared/ipc'
+import type { WebContents } from 'electron'
+import type { IPty } from 'node-pty'
+import * as pty from 'node-pty'
 
 /**
  * PTY 会话管理（M0-1 原型）。
@@ -70,13 +70,7 @@ function resolveShell(): ShellSpec {
 
   const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows'
   const pwsh7 = join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe')
-  const windowsPowerShell = join(
-    systemRoot,
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe'
-  )
+  const windowsPowerShell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 
   if (existsSync(pwsh7)) return { path: pwsh7, args: [] }
   if (existsSync(windowsPowerShell)) return { path: windowsPowerShell, args: [] }

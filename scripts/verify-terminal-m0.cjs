@@ -10,9 +10,7 @@
 const pty = require('node-pty')
 
 const isWindows = process.platform === 'win32'
-const shell = isWindows
-  ? process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe'
-  : process.env.SHELL || '/bin/bash'
+const shell = isWindows ? process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe' : process.env.SHELL || '/bin/bash'
 
 const env = {}
 for (const [key, value] of Object.entries(process.env)) {
@@ -42,7 +40,9 @@ const results = []
 
 async function main() {
   console.log(`平台：${process.platform}　Shell：${shell}`)
-  console.log(`运行时：Electron ${process.versions.electron ?? '无'} / Node ${process.versions.node} / ABI ${process.versions.modules}`)
+  console.log(
+    `运行时：Electron ${process.versions.electron ?? '无'} / Node ${process.versions.node} / ABI ${process.versions.modules}`
+  )
 
   // ---- 1. 多会话并存与会话隔离 ----
   const sessionA = spawn()
@@ -93,9 +93,7 @@ async function main() {
   results.push({
     name: '尺寸变化后仍可用',
     pass: !resizeError && outA.includes('AFTER_RESIZE_MARK'),
-    detail: resizeError
-      ? `resize 抛出异常：${resizeError.message}`
-      : '80x24 → 120x40 → 60x20 后命令仍可执行'
+    detail: resizeError ? `resize 抛出异常：${resizeError.message}` : '80x24 → 120x40 → 60x20 后命令仍可执行'
   })
 
   // ---- 3. 中断信号后会话存活 ----
@@ -115,9 +113,7 @@ async function main() {
   results.push({
     name: '中断信号后会话存活',
     pass: outC.includes('AFTER_INTERRUPT_MARK'),
-    detail: outC.includes('AFTER_INTERRUPT_MARK')
-      ? '发送 Ctrl+C 后可继续执行命令'
-      : '会话在中断后未能继续接受输入'
+    detail: outC.includes('AFTER_INTERRUPT_MARK') ? '发送 Ctrl+C 后可继续执行命令' : '会话在中断后未能继续接受输入'
   })
 
   // ---- 清理 ----

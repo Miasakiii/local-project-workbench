@@ -1,12 +1,8 @@
 import { closeSync, existsSync, lstatSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isProtectedEntry, resolveProjectPath, type PathRejection } from '../security/path-guard'
-import type {
-  FileOperationItem,
-  FileOperationReason,
-  DeleteEntriesResult
-} from '@shared/types'
+import type { DeleteEntriesResult, FileOperationItem, FileOperationReason } from '@shared/types'
+import { isProtectedEntry, type PathRejection, resolveProjectPath } from '../security/path-guard'
 
 /**
  * 文件访问模块 —— 删除与失败处理（设计稿第 7 章，推进计划 M0-5）。
@@ -260,10 +256,7 @@ export async function deleteEntries(request: DeleteEntriesRequest): Promise<Dele
         relativePath,
         status: 'skipped',
         reason: 'protected-entry',
-        message:
-          relativePath.trim().length === 0
-            ? '项目根目录不允许删除。'
-            : '项目根目录与 Git 元数据不提供删除操作。'
+        message: relativePath.trim().length === 0 ? '项目根目录不允许删除。' : '项目根目录与 Git 元数据不提供删除操作。'
       })
       continue
     }

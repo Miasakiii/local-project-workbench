@@ -54,7 +54,10 @@ function sanitizeProject(raw: unknown): Project | null {
 
   return {
     id,
-    displayName: typeof raw['displayName'] === 'string' && raw['displayName'].length > 0 ? raw['displayName'] : basename(normalizedIdentity),
+    displayName:
+      typeof raw['displayName'] === 'string' && raw['displayName'].length > 0
+        ? raw['displayName']
+        : basename(normalizedIdentity),
     originalPath,
     normalizedIdentity,
     descriptionOverride: toStringOrNull(raw['descriptionOverride']),
@@ -81,11 +84,8 @@ function sanitizeViewState(raw: unknown): ProjectViewState | null {
     relativePath: typeof raw['relativePath'] === 'string' ? raw['relativePath'] : '',
     scrollTop: typeof scrollTop === 'number' && Number.isFinite(scrollTop) ? scrollTop : 0,
     terminalPanelHeight:
-      typeof terminalPanelHeight === 'number' && Number.isFinite(terminalPanelHeight)
-        ? terminalPanelHeight
-        : 280,
-    filesPaneWidth:
-      typeof filesPaneWidth === 'number' && Number.isFinite(filesPaneWidth) ? filesPaneWidth : 380
+      typeof terminalPanelHeight === 'number' && Number.isFinite(terminalPanelHeight) ? terminalPanelHeight : 280,
+    filesPaneWidth: typeof filesPaneWidth === 'number' && Number.isFinite(filesPaneWidth) ? filesPaneWidth : 380
   }
 }
 

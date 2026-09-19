@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
 import type { FileEntry, FilePreview, ReadmeDetection } from '@shared/types'
+import { useCallback, useEffect, useState } from 'react'
 import { MarkdownPreview } from './MarkdownPreview'
 
 interface OverviewViewProps {
@@ -33,6 +33,7 @@ export function OverviewView({
   const [candidates, setCandidates] = useState<FileEntry[]>([])
   const [error, setError] = useState<string | null>(null)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: readmePath 是刻意的触发依赖——用户切换 README 变体后必须重新探测
   useEffect(() => {
     let cancelled = false
     void window.workbench.project
@@ -111,8 +112,7 @@ export function OverviewView({
         <div className="empty-state">
           <h2>没有找到介绍文件</h2>
           <p>
-            已在项目根目录、docs 与 .github 中按 README.md、README.markdown、README.txt、README
-            的顺序查找，均未找到。
+            已在项目根目录、docs 与 .github 中按 README.md、README.markdown、README.txt、README 的顺序查找，均未找到。
           </p>
           <p className="hint">应用不会自动创建或写入任何文件。</p>
           <div className="empty-actions">

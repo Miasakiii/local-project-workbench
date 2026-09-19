@@ -153,12 +153,14 @@ function DiffHunks({ diff }: { diff: FileDiff }): React.JSX.Element {
   return (
     <div className="diff-hunks">
       {diff.hunks.map((hunk, hunkIndex) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: hunk 没有稳定标识；索引参与复合键，且差异列表不会重排
         <section className="diff-hunk" key={`${hunk.header}-${hunkIndex}`}>
           <div className="diff-hunk-header" title={hunk.header}>
             {hunk.header}
           </div>
           <div className="diff-lines">
             {hunk.lines.map((line, lineIndex) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: 差异行没有稳定标识；行内容可重复，索引参与复合键是唯一可靠选择
               <div className={`diff-line ${line.kind}`} key={`${hunkIndex}-${lineIndex}`}>
                 <span className="diff-gutter">{line.oldLine ?? ''}</span>
                 <span className="diff-gutter">{line.newLine ?? ''}</span>

@@ -2,8 +2,8 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import type { FileDiff, GitSnapshot } from '@shared/types'
-import { failedSnapshot, parsePorcelainV2 } from './git-parse'
 import { parseUnifiedDiff } from './git-diff-parse'
+import { failedSnapshot, parsePorcelainV2 } from './git-parse'
 
 const execFileAsync = promisify(execFile)
 
@@ -102,18 +102,8 @@ export async function detectRepository(cwd: string): Promise<boolean | null> {
 }
 
 /** 只读查询分支与状态 */
-export async function queryGitStatus(
-  projectId: string,
-  cwd: string,
-  sequence: number
-): Promise<GitSnapshot> {
-  const result = await runGit(cwd, [
-    'status',
-    '--porcelain=v2',
-    '--branch',
-    '--untracked-files=all',
-    '-z'
-  ])
+export async function queryGitStatus(projectId: string, cwd: string, sequence: number): Promise<GitSnapshot> {
+  const result = await runGit(cwd, ['status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z'])
 
   if (!result.ok) {
     return failedSnapshot(projectId, sequence, result.error ?? 'Git 查询失败')

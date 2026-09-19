@@ -168,7 +168,11 @@ async function main(): Promise<void> {
       trusted: true,
       trash: busyTrash
     })
-    check('被占用归类为 in-use', itemOf(result, 'a.txt')?.reason === 'in-use', `reason=${String(itemOf(result, 'a.txt')?.reason)}`)
+    check(
+      '被占用归类为 in-use',
+      itemOf(result, 'a.txt')?.reason === 'in-use',
+      `reason=${String(itemOf(result, 'a.txt')?.reason)}`
+    )
   }
 
   /* ---------- 5. 受保护项与非法路径 ---------- */
@@ -228,7 +232,12 @@ async function main(): Promise<void> {
 
   /* ---------- 7. 边界输入 ---------- */
   {
-    const empty = await deleteEntries({ projectRoot: projectDir, relativePaths: [], trusted: true, trash: workingTrash })
+    const empty = await deleteEntries({
+      projectRoot: projectDir,
+      relativePaths: [],
+      trusted: true,
+      trash: workingTrash
+    })
     check('空列表明确拒绝', empty.aborted === true, `abortReason=${String(empty.abortReason)}`)
 
     const oversized = await deleteEntries({
@@ -258,7 +267,11 @@ async function main(): Promise<void> {
       trusted: true,
       trash: countingTrash
     })
-    check('重复路径只处理一次', calls === 1 && result.items.length === 1, `trash 调用=${calls} 项数=${result.items.length}`)
+    check(
+      '重复路径只处理一次',
+      calls === 1 && result.items.length === 1,
+      `trash 调用=${calls} 项数=${result.items.length}`
+    )
   }
 
   /* ---------- 9. 磁盘确认 ---------- */
@@ -292,13 +305,22 @@ async function main(): Promise<void> {
       [new Error('unknown'), 'io-error']
     ]
     for (const [error, expected] of cases) {
-      check(`错误分类 ${String((error as { code?: string }).code ?? '无码')}`, classifyError(error).reason === expected, `→ ${classifyError(error).reason}`)
+      check(
+        `错误分类 ${String((error as { code?: string }).code ?? '无码')}`,
+        classifyError(error).reason === expected,
+        `→ ${classifyError(error).reason}`
+      )
     }
 
-    check('不支持提示判为不可用', discriminateTrashFailure(join(projectDir, 'a.txt'), new Error('not supported')).abort === true, '→ abort')
+    check(
+      '不支持提示判为不可用',
+      discriminateTrashFailure(join(projectDir, 'a.txt'), new Error('not supported')).abort === true,
+      '→ abort'
+    )
     check(
       'EPERM 判为项级问题',
-      discriminateTrashFailure(join(projectDir, 'a.txt'), Object.assign(new Error('x'), { code: 'EPERM' })).abort === false,
+      discriminateTrashFailure(join(projectDir, 'a.txt'), Object.assign(new Error('x'), { code: 'EPERM' })).abort ===
+        false,
       '→ 不中止'
     )
     check(

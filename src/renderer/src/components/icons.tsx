@@ -27,20 +27,8 @@ export function FolderIcon({ className }: IconProps): React.JSX.Element {
 export function FileIcon({ className }: IconProps): React.JSX.Element {
   return (
     <svg className={className} viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
-      <path
-        d="M3.6 1.9h5.1l3.7 3.7v8.5H3.6z"
-        fill="#ffffff"
-        stroke="#c7ccd4"
-        strokeWidth="1"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8.7 1.9l3.7 3.7H8.7z"
-        fill="#e4e7eb"
-        stroke="#c7ccd4"
-        strokeWidth="1"
-        strokeLinejoin="round"
-      />
+      <path d="M3.6 1.9h5.1l3.7 3.7v8.5H3.6z" fill="#ffffff" stroke="#c7ccd4" strokeWidth="1" strokeLinejoin="round" />
+      <path d="M8.7 1.9l3.7 3.7H8.7z" fill="#e4e7eb" stroke="#c7ccd4" strokeWidth="1" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -65,19 +53,9 @@ export function ChevronIcon({ className }: IconProps): React.JSX.Element {
 export function SidebarIcon({ className }: IconProps): React.JSX.Element {
   return (
     <svg className={className} viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
-      <rect
-        x="1.6"
-        y="2.6"
-        width="12.8"
-        height="10.8"
-        rx="2.4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-      />
+      <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.4" fill="none" stroke="currentColor" strokeWidth="1.3" />
       <path d="M6.2 3.2v9.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       <path d="M2.4 3.4h3.6v9.2H2.4z" fill="currentColor" opacity="0.85" />
     </svg>
   )
 }
-

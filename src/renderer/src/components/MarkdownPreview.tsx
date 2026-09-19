@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
 import type { BlockedNotice, MarkdownDocument } from '@shared/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 interface MarkdownPreviewProps {
   projectId: string
@@ -46,6 +46,7 @@ export function MarkdownPreview({
     return [...groups.entries()]
   }, [document.blocked])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: document 是刻意的触发依赖——效果体只操作 DOM ref，但必须在新的净化结果注入后重新加载资源
   useEffect(() => {
     const host = hostRef.current
     if (host === null) return
@@ -117,20 +118,14 @@ export function MarkdownPreview({
   return (
     <div className="markdown-preview">
       {document.truncated ? (
-        <p className="inline-warning">
-          文件超过 5 MB，仅显示前 5 MB 内容。完整内容请用外部程序打开。
-        </p>
+        <p className="inline-warning">文件超过 5 MB，仅显示前 5 MB 内容。完整内容请用外部程序打开。</p>
       ) : null}
 
       {document.violations.length > 0 ? (
-        <p className="inline-error">
-          渲染自审发现问题，已拒绝采用该输出：{document.violations.join('；')}
-        </p>
+        <p className="inline-error">渲染自审发现问题，已拒绝采用该输出：{document.violations.join('；')}</p>
       ) : null}
 
-      {assetErrors.length > 0 ? (
-        <p className="inline-warning">部分图片未能加载：{assetErrors.join('；')}</p>
-      ) : null}
+      {assetErrors.length > 0 ? <p className="inline-warning">部分图片未能加载：{assetErrors.join('；')}</p> : null}
 
       {allNotices.length > 0 ? (
         <div className="blocked-panel">
@@ -141,6 +136,7 @@ export function MarkdownPreview({
           {noticesOpen ? (
             <ul className="blocked-list">
               {allNotices.map((notice, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 同一原因可对应多条说明且文案可重复，索引参与复合键是唯一可靠选择
                 <li key={`${notice.reason}-${index}`}>
                   <span className={`chip chip-${notice.reason}`}>{reasonLabel(notice.reason)}</span>
                   <span>{notice.message}</span>
@@ -151,11 +147,13 @@ export function MarkdownPreview({
         </div>
       ) : null}
 
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: 本容器是链接委托宿主，真正的可交互元素是其内部的 <a>（由净化层产出） */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: 容器不承载交互语义，键盘操作由内部 <a> 承担 */}
       <div
         className="markdown-body"
         ref={hostRef}
         onClick={handleClick}
-        // 内容由主进程净化并自审，本组件不做任何字符串拼接
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: 内容由主进程净化层产出并自审（markdown-sanitize），净化层永不写出 src/href 原始值
         dangerouslySetInnerHTML={{ __html: document.html }}
       />
     </div>

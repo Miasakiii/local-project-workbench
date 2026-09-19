@@ -172,7 +172,9 @@ export function escapeHtml(value: string): string {
 
 /** 属性值转义：比文本更严格，同时屏蔽反引号与换行。 */
 function escapeAttribute(value: string): string {
-  return escapeHtml(value).replace(/`/g, '&#96;').replace(/[\n\r]/g, '&#10;')
+  return escapeHtml(value)
+    .replace(/`/g, '&#96;')
+    .replace(/[\n\r]/g, '&#10;')
 }
 
 /**
@@ -215,8 +217,7 @@ function sanitizeRawHtml(raw: string, ctx: RenderContext): string {
   let cursor = 0
   const tagRe = createTagTokenRe()
 
-  let match: RegExpExecArray | null
-  while ((match = tagRe.exec(raw)) !== null) {
+  for (let match = tagRe.exec(raw); match !== null; match = tagRe.exec(raw)) {
     const textBefore = raw.slice(cursor, match.index)
     if (textBefore.length > 0) output += escapeHtml(textBefore)
     cursor = match.index + match[0].length
@@ -255,8 +256,11 @@ function sanitizeRawHtml(raw: string, ctx: RenderContext): string {
 
     if (allowed && rawAttributes.length > 0) {
       const attributeRe = createAttributeRe()
-      let attributeMatch: RegExpExecArray | null
-      while ((attributeMatch = attributeRe.exec(rawAttributes)) !== null) {
+      for (
+        let attributeMatch = attributeRe.exec(rawAttributes);
+        attributeMatch !== null;
+        attributeMatch = attributeRe.exec(rawAttributes)
+      ) {
         const name = (attributeMatch[1] as string).toLowerCase()
         if (!allowed.has(name)) continue
         const value = attributeMatch[2] === undefined ? '' : unquote(attributeMatch[2] as string)
@@ -409,9 +413,7 @@ function renderBlocks(blocks: BlockNode[], ctx: RenderContext): string {
         break
       case 'code': {
         const language =
-          block.language === null
-            ? ''
-            : ` data-language="${escapeAttribute(block.language.replace(/[^\w+#.-]/g, ''))}"`
+          block.language === null ? '' : ` data-language="${escapeAttribute(block.language.replace(/[^\w+#.-]/g, ''))}"`
         output += `<pre${language}><code>${escapeHtml(block.value)}</code></pre>`
         break
       }
@@ -464,8 +466,7 @@ export function auditHtml(html: string): string[] {
   const violations: string[] = []
   const tagRe = createTagTokenRe()
 
-  let match: RegExpExecArray | null
-  while ((match = tagRe.exec(html)) !== null) {
+  for (let match = tagRe.exec(html); match !== null; match = tagRe.exec(html)) {
     const tagName = (match[2] as string).toLowerCase()
     if (!ALLOWED_TAGS.has(tagName)) {
       violations.push(`白名单外标签：<${tagName}>`)
@@ -474,8 +475,11 @@ export function auditHtml(html: string): string[] {
     const rawAttributes = match[3] ?? ''
     const allowed = TAG_ATTRIBUTES[tagName]
     const attributeRe = createAttributeRe()
-    let attributeMatch: RegExpExecArray | null
-    while ((attributeMatch = attributeRe.exec(rawAttributes)) !== null) {
+    for (
+      let attributeMatch = attributeRe.exec(rawAttributes);
+      attributeMatch !== null;
+      attributeMatch = attributeRe.exec(rawAttributes)
+    ) {
       const name = (attributeMatch[1] as string).toLowerCase()
       if (name.startsWith('on')) {
         violations.push(`事件属性：${tagName}[${name}]`)

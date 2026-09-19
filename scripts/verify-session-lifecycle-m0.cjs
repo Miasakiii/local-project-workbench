@@ -86,7 +86,7 @@ async function runScenario(label, options) {
 async function main() {
   console.log('=== M0-2 会话生命周期验证 ===')
   console.log(`运行时：Node ${process.versions.node}　Shell：${shell}`)
-  console.log('观测子进程：' + CHILD_IMAGE)
+  console.log(`观测子进程：${CHILD_IMAGE}`)
 
   killStrayChildren()
   await wait(1000)

@@ -14,10 +14,10 @@
 import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRegistry, createRegistryStore, toSummary } from '../src/main/modules/project-registry.ts'
-import { listDirectory, previewFile } from '../src/main/modules/file-browser.ts'
 import { highlightCode } from '../src/main/modules/code-highlight.ts'
+import { listDirectory, previewFile } from '../src/main/modules/file-browser.ts'
 import { detectReadme, renderMarkdownFile } from '../src/main/modules/markdown-preview.ts'
+import { createRegistry, createRegistryStore, toSummary } from '../src/main/modules/project-registry.ts'
 
 const keepFixture = process.argv.includes('--keep')
 const root = join(tmpdir(), 'workbench-m1-fixture')
@@ -76,6 +76,7 @@ function buildFixture(): void {
   writeFileSync(join(projectDir, 'docs', 'guide.md'), '# 指南\n')
   writeFileSync(
     join(projectDir, 'src', 'sample.ts'),
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: 这是写入夹具文件的 TypeScript 源码，${name} 是目标文件里的模板占位符，不是本文件的插值
     '// 示例\nconst value: number = 42\nfunction greet(name: string): string {\n  return `hello ${name}`\n}\n'
   )
   writeFileSync(join(projectDir, 'notes.txt'), '第一行\n第二行\n')
@@ -106,7 +107,11 @@ function main(): void {
 
   const storePath = join(appDataDir, 'projects.json')
   const registry = createRegistry(createRegistryStore(storePath))
-  const describe = (project: { normalizedIdentity: string; descriptionOverride: string | null; readmePath: string | null }): {
+  const describe = (project: {
+    normalizedIdentity: string
+    descriptionOverride: string | null
+    readmePath: string | null
+  }): {
     text: string | null
     source: 'user' | 'readme' | 'path'
   } => {
@@ -130,7 +135,11 @@ function main(): void {
   check('登记新目录', first.status === 'added' && first.project !== null, `status=${first.status}`)
 
   const again = registry.register(projectDir)
-  check('同一路径重复登记不新增记录', again.status === 'existing' && registry.list().length === 1, `status=${again.status} 记录数=${registry.list().length}`)
+  check(
+    '同一路径重复登记不新增记录',
+    again.status === 'existing' && registry.list().length === 1,
+    `status=${again.status} 记录数=${registry.list().length}`
+  )
 
   const viaAlias = registry.register(join(root, 'project-alias'))
   check(
@@ -195,7 +204,11 @@ function main(): void {
   const beforeTouch = afterRemove.get(reAdded.project?.id ?? '')?.lastOpenedAt ?? ''
   afterRemove.touch(reAdded.project?.id ?? '')
   const afterTouch = afterRemove.get(reAdded.project?.id ?? '')?.lastOpenedAt ?? ''
-  check('打开项目刷新最近打开时间', afterTouch >= beforeTouch && afterTouch.length > 0, `${beforeTouch} → ${afterTouch}`)
+  check(
+    '打开项目刷新最近打开时间',
+    afterTouch >= beforeTouch && afterTouch.length > 0,
+    `${beforeTouch} → ${afterTouch}`
+  )
 
   /* ---------- 视图状态持久化 ---------- */
 
@@ -284,13 +297,13 @@ function main(): void {
     unavailableSummary?.available === false && (unavailableSummary?.unavailableReason ?? '').length > 0,
     String(unavailableSummary?.unavailableReason)
   )
-  check(
-    '不可用项目仍保留在列表中',
-    unavailableSummary !== undefined,
-    `记录数=${afterRemove.list().length}`
-  )
+  check('不可用项目仍保留在列表中', unavailableSummary !== undefined, `记录数=${afterRemove.list().length}`)
   const resolveFailed = afterRemove.resolveRoot(temp.project?.id ?? '')
-  check('不可用项目的根目录解析被拒绝', resolveFailed.ok === false, resolveFailed.ok ? '意外成功' : resolveFailed.reason)
+  check(
+    '不可用项目的根目录解析被拒绝',
+    resolveFailed.ok === false,
+    resolveFailed.ok ? '意外成功' : resolveFailed.reason
+  )
 
   /* ---------- 验收场景 3：README 图片放行、脚本与外链阻止 ---------- */
 
@@ -313,11 +326,7 @@ function main(): void {
     readme.blocked.map((notice) => notice.reason).join(', ')
   )
   check('外链计入待外部打开', readme.externalLinkCount >= 1, `externalLinkCount=${readme.externalLinkCount}`)
-  check(
-    '项目内链接可被识别',
-    readme.projectLinks.includes('docs/guide.md'),
-    readme.projectLinks.join(', ')
-  )
+  check('项目内链接可被识别', readme.projectLinks.includes('docs/guide.md'), readme.projectLinks.join(', '))
 
   /* ---------- 文件列表 ---------- */
 
@@ -331,7 +340,9 @@ function main(): void {
   )
   check(
     '文件条目带尺寸与时间',
-    listing.entries.some((entry) => entry.name === 'README.md' && entry.size > 0 && !entry.modifiedAt.startsWith('1970')),
+    listing.entries.some(
+      (entry) => entry.name === 'README.md' && entry.size > 0 && !entry.modifiedAt.startsWith('1970')
+    ),
     'README.md 有尺寸与时间'
   )
   check('根目录面包屑为空', listing.breadcrumb.length === 0, `长度=${listing.breadcrumb.length}`)
@@ -371,11 +382,7 @@ function main(): void {
       (codePreview.highlightedHtml ?? '').includes('data-line="1"'),
     `kind=${codePreview.kind} language=${String(codePreview.language)} lines=${String(codePreview.lineCount)}`
   )
-  check(
-    '高亮输出不含未转义的尖括号',
-    !/<(?!\/?span)/.test(codePreview.highlightedHtml ?? ''),
-    '仅包含 span 标签'
-  )
+  check('高亮输出不含未转义的尖括号', !/<(?!\/?span)/.test(codePreview.highlightedHtml ?? ''), '仅包含 span 标签')
 
   const textPreview = previewFile({ projectRoot: projectDir, relativePath: 'notes.txt' })
   check(
@@ -418,11 +425,7 @@ function main(): void {
   check('对目录请求预览被拒绝', dirPreview.kind === 'error', String(dirPreview.message))
 
   const escapePreview = previewFile({ projectRoot: projectDir, relativePath: 'junction/secret.png' })
-  check(
-    '预览经目录联接指向项目外的文件被拒绝',
-    escapePreview.kind === 'error',
-    String(escapePreview.message)
-  )
+  check('预览经目录联接指向项目外的文件被拒绝', escapePreview.kind === 'error', String(escapePreview.message))
 
   /* ---------- 高亮转义安全性 ---------- */
 

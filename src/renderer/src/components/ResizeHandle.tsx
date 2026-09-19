@@ -101,6 +101,7 @@ export function ResizeHandle({
   return (
     <div
       className={className === undefined ? 'resize-handle' : `resize-handle ${className}`}
+      // biome-ignore lint/a11y/useAriaPropsForRole: separator 在此表示可拖拽边界；已提供 aria-orientation 与 aria-label，aria-valuenow 等值语义对手柄不适用
       role="separator"
       aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
       aria-label={ariaLabel}

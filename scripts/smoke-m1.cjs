@@ -61,6 +61,55 @@ function removeTree(target) {
   }
 }
 
+/**
+ * 断言构建产物不早于源码。
+ *
+ * 本脚本验证的是 `out/` 下的构建产物，而构建并不在验证脚本内部发生。
+ * 若产物陈旧，这里会静默地验证旧代码，让「验证通过」失去意义——
+ * 因此宁可明确失败并提示重新构建，也不接受测到的不是当前源码。
+ */
+function assertArtifactsFresh() {
+  const artifacts = [
+    path.join(ROOT, 'out', 'main', 'index.js'),
+    path.join(ROOT, 'out', 'preload', 'index.js'),
+    path.join(ROOT, 'out', 'renderer', 'index.html')
+  ]
+
+  for (const artifact of artifacts) {
+    if (!fs.existsSync(artifact)) {
+      process.stderr.write(`构建产物不存在：${path.relative(ROOT, artifact)}\n请先执行 npm run build。\n`)
+      process.exit(2)
+    }
+  }
+
+  const oldestArtifact = Math.min(...artifacts.map((artifact) => fs.statSync(artifact).mtimeMs))
+
+  let newestSource = 0
+  const stack = [path.join(ROOT, 'src')]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(full)
+        continue
+      }
+      const stat = fs.statSync(full)
+      if (stat.mtimeMs > newestSource) newestSource = stat.mtimeMs
+    }
+  }
+
+  if (newestSource > oldestArtifact) {
+    process.stderr.write(
+      '构建产物早于源码，冒烟验证会测到旧代码，已中止。\n' +
+        `  最早产物：${new Date(oldestArtifact).toISOString()}\n` +
+        `  最新源码：${new Date(newestSource).toISOString()}\n` +
+        '请先执行 npm run build（或改用 npm run verify:all）。\n'
+    )
+    process.exit(2)
+  }
+}
+
 /* ==================== 子进程：真实 Electron 内执行 ==================== */
 
 function runChild() {
@@ -108,7 +157,7 @@ function runChild() {
     fs.writeFileSync(path.join(projectDir, 'notes.txt'), 'hello\n')
     fs.writeFileSync(
       path.join(projectDir, 'long.txt'),
-      Array.from({ length: 300 }, (_, index) => `第 ${index + 1} 行内容`).join('\n') + '\n'
+      `${Array.from({ length: 300 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')}\n`
     )
     fs.writeFileSync(path.join(secondDir, 'README.md'), '# 第二项目\n\n用于验证项目切换与会话保持。\n')
     fs.writeFileSync(path.join(secondDir, 'plain.txt'), 'second\n')
@@ -312,11 +361,7 @@ function runChild() {
     const escapeAttempt = await window.webContents.executeJavaScript(
       `window.workbench.file.preview({ projectId: ${JSON.stringify(projectId)}, relativePath: '../../Windows/win.ini' })`
     )
-    record(
-      '项目外路径经 IPC 被拒绝',
-      escapeAttempt?.kind === 'error',
-      String(escapeAttempt?.message)
-    )
+    record('项目外路径经 IPC 被拒绝', escapeAttempt?.kind === 'error', String(escapeAttempt?.message))
 
     const snapshot = await window.webContents.executeJavaScript(
       `window.workbench.git.snapshot({ projectId: ${JSON.stringify(projectId)}, sequence: 1 })`
@@ -390,7 +435,9 @@ function runChild() {
     })()`)
     record(
       '侧边栏列出全部项目',
-      sidebarProjects.count === 2 && sidebarProjects.names.includes('冒烟项目') && sidebarProjects.names.includes('第二项目'),
+      sidebarProjects.count === 2 &&
+        sidebarProjects.names.includes('冒烟项目') &&
+        sidebarProjects.names.includes('第二项目'),
       `数量=${sidebarProjects.count} 名称=${sidebarProjects.names.join(' / ')}`
     )
     record(
@@ -590,16 +637,8 @@ function runChild() {
       twoTabs.tabs === 2 && twoTabs.activeTabs === 1,
       `标签=${twoTabs.tabs} 活动=${twoTabs.activeTabs}`
     )
-    record(
-      '两个标签各自保持独立会话',
-      twoTabs.liveDots === 2,
-      `运行中的标签=${twoTabs.liveDots}`
-    )
-    record(
-      '同一时刻只显示一个终端视图',
-      twoTabs.visibleHosts === 1,
-      `可见终端=${twoTabs.visibleHosts}`
-    )
+    record('两个标签各自保持独立会话', twoTabs.liveDots === 2, `运行中的标签=${twoTabs.liveDots}`)
+    record('同一时刻只显示一个终端视图', twoTabs.visibleHosts === 1, `可见终端=${twoTabs.visibleHosts}`)
     record(
       '头部汇总运行中的会话数',
       typeof twoTabs.badge === 'string' && twoTabs.badge.includes('2 个会话运行中'),
@@ -766,11 +805,7 @@ function runChild() {
       afterClose.closeButtons === 1 && afterClose.registered === 2,
       `已打开=${afterClose.closeButtons} 已登记=${afterClose.registered}`
     )
-    record(
-      '关闭当前项目后自动切到其余已打开项目',
-      afterClose.title === '冒烟项目',
-      `当前=${String(afterClose.title)}`
-    )
+    record('关闭当前项目后自动切到其余已打开项目', afterClose.title === '冒烟项目', `当前=${String(afterClose.title)}`)
 
     // 文件树：目录可展开（页面切换改为头部分段控件）
     await evaluate(`(() => {
@@ -854,11 +889,7 @@ function runChild() {
     })()`)
     await sleep(500)
     const afterToggle = await evaluate(`document.querySelectorAll('.tree-row').length`)
-    record(
-      '再次点击同一文件夹收起',
-      afterToggle === beforeExpand,
-      `${afterExpand} 行 → ${afterToggle} 行`
-    )
+    record('再次点击同一文件夹收起', afterToggle === beforeExpand, `${afterExpand} 行 → ${afterToggle} 行`)
 
     // 箭头仍可独立控制展开
     await evaluate(`(() => {
@@ -946,8 +977,7 @@ function runChild() {
 
     fs.writeFileSync(
       path.join(projectDir, 'long.txt'),
-      Array.from({ length: 300 }, (_, index) => `第 ${index + 1} 行内容`).join('\n') +
-        '\n外部追加标记行\n'
+      `${Array.from({ length: 300 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')}\n外部追加标记行\n`
     )
     await sleep(2400)
     const afterExternalEdit = await evaluate(`(() => {
@@ -987,16 +1017,8 @@ function runChild() {
       typeof afterDelete.text === 'string' && afterDelete.text.includes('已不在磁盘上'),
       String(afterDelete.text).slice(0, 40)
     )
-    record(
-      '删除后提供返回目录入口',
-      afterDelete.hasBack === true,
-      `按钮存在=${String(afterDelete.hasBack)}`
-    )
-    record(
-      '删除后文件树移除该条目',
-      afterDelete.stillListed === false,
-      `仍在列表=${String(afterDelete.stillListed)}`
-    )
+    record('删除后提供返回目录入口', afterDelete.hasBack === true, `按钮存在=${String(afterDelete.hasBack)}`)
+    record('删除后文件树移除该条目', afterDelete.stillListed === false, `仍在列表=${String(afterDelete.stillListed)}`)
 
     /* ---------- 变更页与只读差异（M2-1 / M2-2） ---------- */
 
@@ -1098,7 +1120,9 @@ function runChild() {
     }))()`)
     record(
       '未跟踪文件标注没有 Git 基线',
-      textClicked === true && typeof untrackedDiff.note === 'string' && untrackedDiff.note.includes('没有 Git 历史基线'),
+      textClicked === true &&
+        typeof untrackedDiff.note === 'string' &&
+        untrackedDiff.note.includes('没有 Git 历史基线'),
       String(untrackedDiff.note).slice(0, 48)
     )
     record(
@@ -1141,6 +1165,8 @@ function runChild() {
 if (process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE) {
   runChild()
 } else {
+  assertArtifactsFresh()
+
   const { spawnSync } = require('node:child_process')
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE

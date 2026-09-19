@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
 import type { ProjectSummary } from '@shared/types'
+import { useMemo, useState } from 'react'
 
 interface ProjectSidebarProps {
   open: boolean
@@ -61,11 +61,7 @@ export function ProjectSidebar({
   }, [projects, query])
 
   return (
-    <aside
-      className={open ? 'sidebar' : 'sidebar collapsed'}
-      aria-hidden={!open}
-      aria-label="项目列表"
-    >
+    <aside className={open ? 'sidebar' : 'sidebar collapsed'} aria-hidden={!open} aria-label="项目列表">
       <div className="sidebar-head">
         <span className="sidebar-title">项目</span>
         <span className="chip">{projects.length}</span>
@@ -128,9 +124,7 @@ export function ProjectSidebar({
           )
         })}
 
-        {projects.length === 0 ? (
-          <p className="sidebar-empty">还没有登记任何项目。可在项目库中登记。</p>
-        ) : null}
+        {projects.length === 0 ? <p className="sidebar-empty">还没有登记任何项目。可在项目库中登记。</p> : null}
         {projects.length > 0 && filtered.length === 0 ? (
           <p className="sidebar-empty">没有匹配「{query}」的项目。</p>
         ) : null}

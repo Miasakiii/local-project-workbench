@@ -1,17 +1,19 @@
 import type {
   AppInfo,
+  AssetReadResult,
+  DeleteEntriesResult,
   DiffScope,
   FileDiff,
   FileListResult,
+  FileOperationItem,
   FilePreview,
   GitSnapshot,
   MarkdownDocument,
-  ProjectPage,
   ProjectChangedEvent,
+  ProjectPage,
   ProjectSummary,
   ReadmeDetection
 } from './types'
-import type { AssetReadResult, DeleteEntriesResult, FileOperationItem } from './types'
 
 /**
  * IPC 通道名与契约。
@@ -218,8 +220,8 @@ export type {
   FilePreview,
   GitSnapshot,
   MarkdownDocument,
-  ProjectPage,
   ProjectChangedEvent,
+  ProjectPage,
   ProjectSummary,
   ReadmeDetection
 }

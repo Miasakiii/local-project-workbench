@@ -16,8 +16,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseUnifiedDiff, synthesizeAddedDiff } from '../src/main/modules/git-diff-parse.ts'
 import { fileDiff, MAX_DIFF_LINES } from '../src/main/modules/diff-service.ts'
+import { parseUnifiedDiff, synthesizeAddedDiff } from '../src/main/modules/git-diff-parse.ts'
 
 const keepFixture = process.argv.includes('--keep')
 const root = join(tmpdir(), 'workbench-m2-diff')
@@ -47,11 +47,7 @@ function buildFixtures(): void {
   git(repo, ['config', 'user.name', 'verify'])
   git(repo, ['config', 'core.autocrlf', 'false'])
 
-  writeFileSync(
-    join(repo, '普通 文件.txt'),
-    ['第一行', '第二行', '第三行', '第四行', '第五行', ''].join('\n'),
-    'utf8'
-  )
+  writeFileSync(join(repo, '普通 文件.txt'), ['第一行', '第二行', '第三行', '第四行', '第五行', ''].join('\n'), 'utf8')
   writeFileSync(join(repo, 'to-delete.txt'), 'will be deleted\n', 'utf8')
   writeFileSync(join(repo, 'binary.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]))
   writeFileSync(join(repo, 'old-name.txt'), 'renamed content\n', 'utf8')
@@ -141,14 +137,16 @@ function verifyParser(): void {
   )
   check(
     '上下文行新行号按增删正确位移',
-    lines.filter((line) => line.kind === 'context').map((line) => line.newLine).join(',') === '1,3,5',
-    lines.filter((line) => line.kind === 'context').map((line) => line.newLine).join(',')
+    lines
+      .filter((line) => line.kind === 'context')
+      .map((line) => line.newLine)
+      .join(',') === '1,3,5',
+    lines
+      .filter((line) => line.kind === 'context')
+      .map((line) => line.newLine)
+      .join(',')
   )
-  check(
-    '尾随空行不产生多余行',
-    lines.length === 6,
-    `行数=${lines.length}（3 上下文 + 1 删除 + 2 新增）`
-  )
+  check('尾随空行不产生多余行', lines.length === 6, `行数=${lines.length}（3 上下文 + 1 删除 + 2 新增）`)
 
   const multi = parseUnifiedDiff(
     ['@@ -1,2 +1,2 @@', ' a', '-b', '+B', '@@ -10,2 +10,3 @@', ' j', '+k', ' l', ''].join('\n')
@@ -173,9 +171,7 @@ function verifyParser(): void {
   const deleted = parseUnifiedDiff(['deleted file mode 100644', '@@ -1,2 +0,0 @@', '-a', '-b', ''].join('\n'))
   check('识别删除文件', deleted.status === 'deleted', `status=${deleted.status}`)
 
-  const renamed = parseUnifiedDiff(
-    ['rename from 旧名字.txt', 'rename to 新名字.txt', ''].join('\n')
-  )
+  const renamed = parseUnifiedDiff(['rename from 旧名字.txt', 'rename to 新名字.txt', ''].join('\n'))
   check(
     '识别重命名并保留原路径',
     renamed.status === 'renamed' && renamed.originalPath === '旧名字.txt',
@@ -188,9 +184,7 @@ function verifyParser(): void {
   const gitBinary = parseUnifiedDiff(['GIT binary patch', 'literal 12', ''].join('\n'))
   check('识别 GIT binary patch', gitBinary.binary === true, `binary=${String(gitBinary.binary)}`)
 
-  const noNewline = parseUnifiedDiff(
-    ['@@ -1 +1 @@', '-a', '\\ No newline at end of file', '+b', ''].join('\n')
-  )
+  const noNewline = parseUnifiedDiff(['@@ -1 +1 @@', '-a', '\\ No newline at end of file', '+b', ''].join('\n'))
   const metaLine = noNewline.hunks[0]?.lines.find((line) => line.kind === 'meta')
   check(
     '无换行结尾标记归为元信息',
@@ -201,9 +195,7 @@ function verifyParser(): void {
   const empty = parseUnifiedDiff('')
   check('空输入表示无差异', empty.status === 'unchanged' && empty.hunks.length === 0, `status=${empty.status}`)
 
-  const onlyHeader = parseUnifiedDiff(
-    ['diff --git a/x b/x', 'index 1..2 100644', '--- a/x', '+++ b/x', ''].join('\n')
-  )
+  const onlyHeader = parseUnifiedDiff(['diff --git a/x b/x', 'index 1..2 100644', '--- a/x', '+++ b/x', ''].join('\n'))
   check('只有文件头表示无差异', onlyHeader.status === 'unchanged', `status=${onlyHeader.status}`)
 
   /* ---------- 合成未跟踪差异 ---------- */
@@ -218,8 +210,7 @@ function verifyParser(): void {
   )
   check(
     '合成差异不因结尾换行多出一行',
-    synthesized.hunks[0]?.lines.length === 3 &&
-      synthesized.hunks[0]?.lines[2]?.newLine === 3,
+    synthesized.hunks[0]?.lines.length === 3 && synthesized.hunks[0]?.lines[2]?.newLine === 3,
     `行数=${String(synthesized.hunks[0]?.lines.length)}`
   )
   const emptyContent = synthesizeAddedDiff('')

@@ -1,8 +1,8 @@
 import { readFileSync, statSync } from 'node:fs'
 import type { DiffHunk, DiffScope, FileDiff } from '@shared/types'
 import { resolveProjectPath } from '../security/path-guard'
-import { queryFileDiff } from './git-query'
 import { parseUnifiedDiff, synthesizeAddedDiff, synthesizeContentDiff } from './git-diff-parse'
+import { queryFileDiff } from './git-query'
 
 /**
  * 差异服务（设计稿 5.2）。
@@ -80,10 +80,7 @@ function looksBinary(buffer: Buffer): boolean {
 }
 
 /** 合成未跟踪文件的「全部新增」差异：无基线，仅呈现当前内容。 */
-function contentDiff(
-  request: FileDiffRequest,
-  mode: 'untracked' | 'conflicted'
-): FileDiff {
+function contentDiff(request: FileDiffRequest, mode: 'untracked' | 'conflicted'): FileDiff {
   const resolution = resolveProjectPath(request.projectRoot, request.relativePath, {
     mustExist: true,
     expect: 'file'
@@ -133,8 +130,7 @@ function contentDiff(
 
   const content = buffer.toString('utf8')
   // 冲突文件呈现「当前内容」（含冲突标记），不做增删推断（设计稿 5.2）
-  const parsed =
-    mode === 'conflicted' ? synthesizeContentDiff(content) : synthesizeAddedDiff(content)
+  const parsed = mode === 'conflicted' ? synthesizeContentDiff(content) : synthesizeAddedDiff(content)
   const clamped = clampHunks(parsed.hunks)
 
   return {
@@ -179,7 +175,31 @@ export async function fileDiff(request: FileDiffRequest): Promise<FileDiff> {
 
 /** 供调用方判断：给定扩展名是否值得尝试逐行差异（二进制文件直接跳过）。 */
 export function isProbablyTextExtension(extension: string): boolean {
-  const binary = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.avif', '.bmp', '.pdf', '.zip', '.gz', '.7z', '.exe', '.dll', '.so', '.dylib', '.woff', '.woff2', '.ttf', '.otf', '.mp4', '.mp3', '.mov'])
+  const binary = new Set([
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.webp',
+    '.ico',
+    '.avif',
+    '.bmp',
+    '.pdf',
+    '.zip',
+    '.gz',
+    '.7z',
+    '.exe',
+    '.dll',
+    '.so',
+    '.dylib',
+    '.woff',
+    '.woff2',
+    '.ttf',
+    '.otf',
+    '.mp4',
+    '.mp3',
+    '.mov'
+  ])
   return !binary.has(extension.toLowerCase())
 }
 

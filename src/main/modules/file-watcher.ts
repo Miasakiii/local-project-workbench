@@ -1,8 +1,8 @@
-import { existsSync, watch, type FSWatcher } from 'node:fs'
+import { existsSync, type FSWatcher, watch } from 'node:fs'
 import { join, sep } from 'node:path'
-import type { WebContents } from 'electron'
 import { IpcChannel } from '@shared/ipc'
 import type { ProjectChangedEvent } from '@shared/types'
+import type { WebContents } from 'electron'
 
 /**
  * 受控文件监听（设计稿 5.3，M2-3）。

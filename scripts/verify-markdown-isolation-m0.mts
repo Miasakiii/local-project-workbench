@@ -14,16 +14,11 @@
  *   （附加 --keep 保留临时样例目录，便于人工检查）
  */
 
-import { mkdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { detectReadme, extractSummary, readAsset, renderMarkdownFile } from '../src/main/modules/markdown-preview.ts'
 import { checkRelativeShape } from '../src/main/security/path-guard.ts'
-import {
-  detectReadme,
-  extractSummary,
-  readAsset,
-  renderMarkdownFile
-} from '../src/main/modules/markdown-preview.ts'
 
 const keepFixture = process.argv.includes('--keep')
 const fixtureRoot = join(tmpdir(), 'workbench-m0-4-fixture')
@@ -160,8 +155,7 @@ function run(): void {
   /* ---------- 二、合法内容放行 ---------- */
 
   const imgCount = (html.match(/<img/g) ?? []).length
-  const allAssetsOk =
-    imgCount === 3 && (html.match(/data-asset="assets\/logo\.png"/g) ?? []).length === 3
+  const allAssetsOk = imgCount === 3 && (html.match(/data-asset="assets\/logo\.png"/g) ?? []).length === 3
   check('项目内图片放行且去重', allAssetsOk, `<img> 数量=${imgCount}，data-asset 引用=3`)
   check('资源清单去重', doc.assets.length === 1 && doc.assets[0] === 'assets/logo.png', doc.assets.join(', '))
   check('允许的原始 HTML 属性保留', html.includes('<p align="center">'), '保留 <p align="center">')
@@ -210,14 +204,20 @@ function run(): void {
   for (const tag of ['script', 'iframe', 'object', 'embed', 'svg', 'style', 'base', 'meta']) {
     check(`移除主动标签 <${tag}>`, hasNotice(doc.blocked, 'tag', tag, 'raw-html'), '已记录阻止')
   }
-  check('移除 HTML 注释', doc.blocked.some((notice) => notice.kind === 'comment'), '已记录阻止')
+  check(
+    '移除 HTML 注释',
+    doc.blocked.some((notice) => notice.kind === 'comment'),
+    '已记录阻止'
+  )
 
   /* ---------- 四、读取阶段二次校验 ---------- */
 
   const okAsset = readAsset({ projectRoot: projectDir, relativePath: 'assets/logo.png' })
   check(
     '项目内图片可读取为 data URL',
-    okAsset.status === 'ok' && okAsset.mime === 'image/png' && (okAsset.dataUrl ?? '').startsWith('data:image/png;base64,'),
+    okAsset.status === 'ok' &&
+      okAsset.mime === 'image/png' &&
+      (okAsset.dataUrl ?? '').startsWith('data:image/png;base64,'),
     `status=${okAsset.status} bytes=${okAsset.bytes}`
   )
 
@@ -245,7 +245,7 @@ function run(): void {
     ['C:/Windows/win.ini', false, 'absolute'],
     ['/etc/passwd', false, 'absolute'],
     [String.raw`\\host\share\file`, false, 'unc'],
-    ['a\0b', false, 'nul-byte', ],
+    ['a\0b', false, 'nul-byte'],
     ['CON', false, 'device-path'],
     ['nul.txt', false, 'device-path'],
     ['a.', false, 'trailing-dot-or-space'],
@@ -290,7 +290,11 @@ function run(): void {
   /* ---------- 七、README 识别与阈值 ---------- */
 
   const detection = detectReadme(projectDir)
-  check('README 识别命中根目录', detection.selected === 'README.md' && detection.location === 'root', `selected=${String(detection.selected)}`)
+  check(
+    'README 识别命中根目录',
+    detection.selected === 'README.md' && detection.location === 'root',
+    `selected=${String(detection.selected)}`
+  )
   check(
     '多语言变体被识别',
     detection.variants.some((variant) => variant.relativePath === 'README.zh-CN.md' && variant.locale === 'zh-CN'),
@@ -320,7 +324,7 @@ function run(): void {
   )
 
   const summary = extractSummary(projectDir, 'README.md')
-  check('简介提取跳过标题与 HTML 块', summary !== null && summary.includes('普通段落'), `summary=${String(summary)}`)
+  check('简介提取跳过标题与 HTML 块', summary?.includes('普通段落') === true, `summary=${String(summary)}`)
 
   /* ---------- 输出 ---------- */
 

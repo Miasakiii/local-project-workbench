@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectPage as ProjectPageName, ProjectSummary, ProjectViewState } from '@shared/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChangesView } from '../components/ChangesView'
 import { FileBrowser } from '../components/FileBrowser'
+import { SidebarIcon } from '../components/icons'
 import { OverviewView } from '../components/OverviewView'
 import { ResizeHandle } from '../components/ResizeHandle'
 import { TerminalView } from '../components/TerminalView'
-import { SidebarIcon } from '../components/icons'
 
 interface ProjectPageProps {
   project: ProjectSummary
@@ -161,16 +161,13 @@ export function ProjectPage({
     setTabs((current) => current.map((tab) => (tab.key === key ? { ...tab, ...patch } : tab)))
   }, [])
 
-  const addTab = useCallback(
-    (relativePath: string) => {
-      const key = tabKeyRef.current
-      tabKeyRef.current += 1
-      setTabs((current) => [...current, { key, relativePath, sessionId: null, epoch: 0 }])
-      setActiveTabKey(key)
-      setTerminalOpen(true)
-    },
-    []
-  )
+  const addTab = useCallback((relativePath: string) => {
+    const key = tabKeyRef.current
+    tabKeyRef.current += 1
+    setTabs((current) => [...current, { key, relativePath, sessionId: null, epoch: 0 }])
+    setActiveTabKey(key)
+    setTerminalOpen(true)
+  }, [])
 
   const closeTab = useCallback((key: number) => {
     setTabs((current) => {
@@ -248,11 +245,7 @@ export function ProjectPage({
   }, [])
 
   const terminalStateLabel =
-    tabs.length === 0
-      ? '未创建'
-      : runningTabCount > 0
-        ? `${runningTabCount} 个会话运行中`
-        : `${tabs.length} 个标签`
+    tabs.length === 0 ? '未创建' : runningTabCount > 0 ? `${runningTabCount} 个会话运行中` : `${tabs.length} 个标签`
 
   return (
     <div className="project-page">
@@ -321,14 +314,9 @@ export function ProjectPage({
         </div>
       </header>
 
-      {!project.available ? (
-        <p className="inline-error">{project.unavailableReason ?? '项目目录当前不可用'}</p>
-      ) : null}
+      {!project.available ? <p className="inline-error">{project.unavailableReason ?? '项目目录当前不可用'}</p> : null}
 
-      <main
-        className="project-content"
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-      >
+      <main className="project-content" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         {page === 'overview' ? (
           <OverviewView
             projectId={project.id}
@@ -358,11 +346,7 @@ export function ProjectPage({
         ) : null}
 
         {page === 'changes' ? (
-          <ChangesView
-            projectId={project.id}
-            isGitRepository={project.isGitRepository}
-            refreshToken={changeToken}
-          />
+          <ChangesView projectId={project.id} isGitRepository={project.isGitRepository} refreshToken={changeToken} />
         ) : null}
       </main>
 
@@ -459,9 +443,7 @@ export function ProjectPage({
           {tabs.map((tab) => (
             <div
               key={`${tab.key}-${tab.epoch}`}
-              className={
-                terminalOpen && tab.key === activeTabKey ? 'terminal-host-wrap' : 'terminal-host-wrap hidden'
-              }
+              className={terminalOpen && tab.key === activeTabKey ? 'terminal-host-wrap' : 'terminal-host-wrap hidden'}
             >
               <TerminalView
                 projectId={project.id}
@@ -479,9 +461,7 @@ export function ProjectPage({
           <div className="modal">
             <h2>信任「{project.displayName}」？</h2>
             <p>终端具备当前用户的系统权限，可以读写该项目之外的任何位置。请只对你自己控制的目录开启。</p>
-            <p className="hint">
-              信任后：可在项目内创建终端、删除文件（发送到系统回收站）。不信任时项目为只读浏览。
-            </p>
+            <p className="hint">信任后：可在项目内创建终端、删除文件（发送到系统回收站）。不信任时项目为只读浏览。</p>
             <div className="modal-actions">
               <button type="button" onClick={() => setTrustPrompt(false)}>
                 取消

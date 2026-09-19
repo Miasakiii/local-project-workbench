@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DiffScope, FileDiff, GitChangeGroup, GitSnapshot } from '@shared/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { DiffView } from './DiffView'
 
 interface ChangesViewProps {
@@ -51,11 +51,7 @@ interface SelectedEntry {
  * - 查询失败显示原因与上次更新时间，**不得呈现为「无变更」**（设计稿 5.3）。
  * - 查询序号递增，丢弃过期返回，避免旧查询覆盖新结果（设计稿 5.3）。
  */
-export function ChangesView({
-  projectId,
-  isGitRepository,
-  refreshToken
-}: ChangesViewProps): React.JSX.Element {
+export function ChangesView({ projectId, isGitRepository, refreshToken }: ChangesViewProps): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<SelectedEntry | null>(null)
@@ -114,7 +110,7 @@ export function ChangesView({
     setSnapshot(null)
     if (isGitRepository !== true) return
     void refresh()
-  }, [isGitRepository, projectId, refresh])
+  }, [isGitRepository, refresh])
 
   // 文件变化后重新查询；同时重载当前选中文件的差异
   useEffect(() => {
@@ -157,9 +153,7 @@ export function ChangesView({
         <div className="empty-state">
           <h2>无法判断变化</h2>
           <p>未检测到可用的 Git 程序，因此无法判断该目录的版本变化。</p>
-          <p className="hint">
-            这与「没有变化」不是一回事。安装 Git 后重新登记该项目即可获得变更信息。
-          </p>
+          <p className="hint">这与「没有变化」不是一回事。安装 Git 后重新登记该项目即可获得变更信息。</p>
         </div>
       </div>
     )
@@ -189,11 +183,8 @@ export function ChangesView({
             <span className="error">无法判断变化</span>
           ) : (
             <span>
-              分支{' '}
-              <code title={snapshot.branch ?? ''}>
-                {snapshot.branch ?? '（无分支，可能尚无首次提交）'}
-              </code>{' '}
-              · 变更文件 {uniqueFiles.size} 个
+              分支 <code title={snapshot.branch ?? ''}>{snapshot.branch ?? '（无分支，可能尚无首次提交）'}</code> ·
+              变更文件 {uniqueFiles.size} 个
             </span>
           )}
         </div>
@@ -237,8 +228,7 @@ export function ChangesView({
                   </header>
                   <ul>
                     {entries.map((entry) => {
-                      const isSelected =
-                        selected?.relativePath === entry.relativePath && selected.group === group
+                      const isSelected = selected?.relativePath === entry.relativePath && selected.group === group
                       return (
                         <li key={`${group}-${entry.relativePath}`}>
                           <button

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
 import type { AssetReadResult, FilePreview } from '@shared/types'
+import { useCallback, useEffect, useState } from 'react'
 import { MarkdownPreview } from './MarkdownPreview'
 
 interface PreviewPaneProps {
@@ -33,6 +33,7 @@ export function PreviewPane({
   const [oversizedImage, setOversizedImage] = useState<AssetReadResult | null>(null)
   const [loadingOversized, setLoadingOversized] = useState(false)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: preview?.relativePath 是刻意的触发依赖——效果体只做状态复位，但换文件时必须重置大图读取结果
   useEffect(() => {
     setOversizedImage(null)
   }, [preview?.relativePath])
@@ -101,11 +102,7 @@ export function PreviewPane({
           return <div className="preview-empty">Markdown 渲染结果不可用。</div>
         }
         return (
-          <MarkdownPreview
-            projectId={projectId}
-            document={document}
-            onNavigateProjectPath={onNavigateProjectPath}
-          />
+          <MarkdownPreview projectId={projectId} document={document} onNavigateProjectPath={onNavigateProjectPath} />
         )
       }
 
@@ -113,12 +110,10 @@ export function PreviewPane({
         return (
           <div className="code-view">
             {preview.message !== null ? <p className="inline-warning">{preview.message}</p> : null}
-            {preview.truncated ? (
-              <p className="inline-warning">文件超过 5 MB，仅显示前 5 MB 内容。</p>
-            ) : null}
+            {preview.truncated ? <p className="inline-warning">文件超过 5 MB，仅显示前 5 MB 内容。</p> : null}
             <pre className="code-block">
               <code
-                // 高亮结果由主进程生成，只包含已转义的 span 与文本
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: 高亮结果由主进程生成，只包含已转义的 span 与文本
                 dangerouslySetInnerHTML={{ __html: preview.highlightedHtml ?? '' }}
               />
             </pre>
@@ -129,9 +124,7 @@ export function PreviewPane({
         return (
           <div className="text-view">
             {preview.message !== null ? <p className="inline-warning">{preview.message}</p> : null}
-            {preview.truncated ? (
-              <p className="inline-warning">文件超过 5 MB，仅显示前 5 MB 内容。</p>
-            ) : null}
+            {preview.truncated ? <p className="inline-warning">文件超过 5 MB，仅显示前 5 MB 内容。</p> : null}
             <pre className="text-block">{preview.text ?? ''}</pre>
           </div>
         )
@@ -170,9 +163,7 @@ export function PreviewPane({
         return (
           <div className="preview-empty">
             <p>{missing ? '该文件已不在磁盘上' : (preview.message ?? '该文件无法预览')}</p>
-            {missing ? (
-              <p className="hint">文件可能已被外部程序移动或删除。可返回目录重新选择。</p>
-            ) : null}
+            {missing ? <p className="hint">文件可能已被外部程序移动或删除。可返回目录重新选择。</p> : null}
             {missing && onDismiss !== undefined ? (
               <button type="button" className="primary" onClick={onDismiss}>
                 返回目录

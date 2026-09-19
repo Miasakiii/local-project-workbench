@@ -22,7 +22,6 @@
 
 const path = require('node:path')
 const fs = require('node:fs')
-const os = require('node:os')
 const zlib = require('node:zlib')
 const { spawnSync } = require('node:child_process')
 
@@ -66,9 +65,7 @@ function runChild() {
       workingSetMB: Number((entry.memory.workingSetSize / 1024).toFixed(1)),
       peakWorkingSetMB: Number((entry.memory.peakWorkingSetSize / 1024).toFixed(1))
     }))
-    const totalWorkingSetMB = Number(
-      metrics.reduce((sum, entry) => sum + entry.workingSetMB, 0).toFixed(1)
-    )
+    const totalWorkingSetMB = Number(metrics.reduce((sum, entry) => sum + entry.workingSetMB, 0).toFixed(1))
     process.stdout.write(
       '\nMEASURE_JSON ' +
         JSON.stringify({
@@ -218,8 +215,12 @@ async function runSizes() {
   console.log(`  Electron 运行时            ${String(mb(electron.bytes)).padStart(7)} MB  (${electron.files} 个文件)`)
   console.log(`  应用产物 out/              ${String(mb(appCode.bytes)).padStart(7)} MB  (${appCode.files} 个文件)`)
   console.log(`  node-pty 全部              ${String(mb(ptyTotal.bytes)).padStart(7)} MB`)
-  console.log(`    ├─ 仅 win32-x64 + conpty ${String(mb(ptyWin.bytes + ptyConpty.bytes + ptyLib.bytes)).padStart(7)} MB  (实际需分发)`)
-  console.log(`    └─ 其他平台预编译产物    ${String(mb(ptyTotal.bytes - ptyWin.bytes - ptyConpty.bytes - ptyLib.bytes)).padStart(7)} MB  (可不分发)`)
+  console.log(
+    `    ├─ 仅 win32-x64 + conpty ${String(mb(ptyWin.bytes + ptyConpty.bytes + ptyLib.bytes)).padStart(7)} MB  (实际需分发)`
+  )
+  console.log(
+    `    └─ 其他平台预编译产物    ${String(mb(ptyTotal.bytes - ptyWin.bytes - ptyConpty.bytes - ptyLib.bytes)).padStart(7)} MB  (可不分发)`
+  )
 
   const unpacked = electron.bytes + appCode.bytes + ptyWin.bytes + ptyConpty.bytes + ptyLib.bytes
   console.log(`\n  合计（未压缩，实际需分发）  ${String(mb(unpacked)).padStart(7)} MB`)
@@ -329,10 +330,14 @@ async function main() {
       if (last.metrics) {
         console.log('\n  进程明细（末次样本）：')
         for (const entry of last.metrics) {
-          console.log(`    ${entry.type.padEnd(10)} pid=${String(entry.pid).padEnd(7)} 工作集=${entry.workingSetMB}MB 峰值=${entry.peakWorkingSetMB}MB`)
+          console.log(
+            `    ${entry.type.padEnd(10)} pid=${String(entry.pid).padEnd(7)} 工作集=${entry.workingSetMB}MB 峰值=${entry.peakWorkingSetMB}MB`
+          )
         }
       }
-      console.log(`\n  运行时版本：Electron ${String(last.electron)} / Chromium ${String(last.chrome)} / Node ${String(last.node)}`)
+      console.log(
+        `\n  运行时版本：Electron ${String(last.electron)} / Chromium ${String(last.chrome)} / Node ${String(last.node)}`
+      )
       if (medianMemory !== null) {
         console.log(`  说明：工作集为各进程之和，含共享页重复计入，仅用于纵向对比。`)
       }

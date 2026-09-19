@@ -140,13 +140,48 @@ const LANGUAGES: Record<string, LanguageSpec> = {
     lineComments: ['#'],
     blockComment: null,
     quotes: ['"', "'"],
-    keywords: ['if', 'then', 'else', 'elif', 'fi', 'for', 'do', 'done', 'while', 'case', 'esac', 'function', 'return', 'export', 'local', 'echo', 'exit', 'set']
+    keywords: [
+      'if',
+      'then',
+      'else',
+      'elif',
+      'fi',
+      'for',
+      'do',
+      'done',
+      'while',
+      'case',
+      'esac',
+      'function',
+      'return',
+      'export',
+      'local',
+      'echo',
+      'exit',
+      'set'
+    ]
   },
   powershell: {
     lineComments: ['#'],
     blockComment: ['<#', '#>'],
     quotes: ['"', "'"],
-    keywords: ['param', 'function', 'if', 'else', 'elseif', 'foreach', 'while', 'return', 'try', 'catch', 'finally', 'throw', 'begin', 'process', 'end']
+    keywords: [
+      'param',
+      'function',
+      'if',
+      'else',
+      'elseif',
+      'foreach',
+      'while',
+      'return',
+      'try',
+      'catch',
+      'finally',
+      'throw',
+      'begin',
+      'process',
+      'end'
+    ]
   },
   rust: {
     lineComments: ['//'],
@@ -625,7 +660,11 @@ export function highlightCode(source: string, language: string | null): Highligh
     .map((line, index) => {
       const tokens = tokenize(line, spec)
       const body = tokens
-        .map((token) => (token.className === null ? escapeHtml(token.text) : `<span class="${token.className}">${escapeHtml(token.text)}</span>`))
+        .map((token) =>
+          token.className === null
+            ? escapeHtml(token.text)
+            : `<span class="${token.className}">${escapeHtml(token.text)}</span>`
+        )
         .join('')
       return `<span class="code-line" data-line="${index + 1}">${body}</span>`
     })

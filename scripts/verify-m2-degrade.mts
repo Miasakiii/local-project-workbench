@@ -14,9 +14,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { detectRepository, queryFileDiff, queryGitStatus } from '../src/main/modules/git-query.ts'
-import { isWatchedPath } from '../src/main/modules/file-watcher.ts'
 import { fileDiff } from '../src/main/modules/diff-service.ts'
+import { isWatchedPath } from '../src/main/modules/file-watcher.ts'
+import { detectRepository, queryFileDiff, queryGitStatus } from '../src/main/modules/git-query.ts'
 
 const keepFixture = process.argv.includes('--keep')
 const root = join(tmpdir(), 'workbench-m2-degrade')
@@ -93,11 +93,7 @@ async function verifyDegradation(): Promise<void> {
     plainStatus.stale === true && plainStatus.error !== null && plainStatus.entries.length === 0,
     `stale=${String(plainStatus.stale)} error=${String(plainStatus.error).slice(0, 40)}`
   )
-  check(
-    '失败快照保留查询序号',
-    plainStatus.sequence === 1,
-    `sequence=${plainStatus.sequence}`
-  )
+  check('失败快照保留查询序号', plainStatus.sequence === 1, `sequence=${plainStatus.sequence}`)
 
   const plainDiff = await queryFileDiff('p', plainDir, 'note.txt', 'unstaged')
   check(
@@ -105,22 +101,14 @@ async function verifyDegradation(): Promise<void> {
     plainDiff.stale === true && plainDiff.error !== null,
     `stale=${String(plainDiff.stale)} error=${String(plainDiff.error).slice(0, 40)}`
   )
-  check(
-    '失败差异不伪装成「无变化」',
-    plainDiff.hunks.length === 0 && plainDiff.error !== null,
-    '有 error 且无 hunks'
-  )
+  check('失败差异不伪装成「无变化」', plainDiff.hunks.length === 0 && plainDiff.error !== null, '有 error 且无 hunks')
 
   const detected = await detectRepository(plainDir)
   check('非仓库目录被判定为不是仓库', detected === false, `detectRepository=${String(detected)}`)
 
   const missingDir = join(root, 'does-not-exist')
   const missingDetected = await detectRepository(missingDir)
-  check(
-    '不存在的目录被判定为不是仓库',
-    missingDetected === false,
-    `detectRepository=${String(missingDetected)}`
-  )
+  check('不存在的目录被判定为不是仓库', missingDetected === false, `detectRepository=${String(missingDetected)}`)
 
   /* 无首次提交的仓库：不得因无 HEAD 而判为损坏 */
   const noHeadStatus = await queryGitStatus('p', noHeadRepo, 2)
@@ -147,11 +135,7 @@ async function verifyDegradation(): Promise<void> {
     relativePath: '../../etc/passwd',
     scope: 'unstaged'
   })
-  check(
-    '项目外路径被拒绝并给出原因',
-    outside.stale === true && outside.error !== null,
-    String(outside.error)
-  )
+  check('项目外路径被拒绝并给出原因', outside.stale === true && outside.error !== null, String(outside.error))
 
   /* 不存在的文件：读取阶段明确报错 */
   const missingFile = await fileDiff({
@@ -160,11 +144,7 @@ async function verifyDegradation(): Promise<void> {
     relativePath: 'missing.txt',
     scope: 'untracked'
   })
-  check(
-    '不存在的文件给出明确错误',
-    missingFile.error !== null && missingFile.stale === true,
-    String(missingFile.error)
-  )
+  check('不存在的文件给出明确错误', missingFile.error !== null && missingFile.stale === true, String(missingFile.error))
 
   /* 干净仓库：确实「无差异」时不得报错 */
   const cleanDiff = await fileDiff({

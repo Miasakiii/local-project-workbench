@@ -34,7 +34,7 @@ app.whenReady().then(() => {
     pty = require('node-pty')
   } catch (error) {
     console.error('[失败] node-pty 无法在 Electron 中加载')
-    console.error(error && error.message ? error.message : String(error))
+    console.error(error?.message || String(error))
     console.error('提示：需要针对 Electron ABI 重新构建原生模块。')
     app.exit(1)
     return
@@ -43,9 +43,7 @@ app.whenReady().then(() => {
   console.log('[通过] node-pty 已在 Electron 中加载')
 
   const isWindows = process.platform === 'win32'
-  const shell = isWindows
-    ? process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe'
-    : process.env.SHELL || '/bin/bash'
+  const shell = isWindows ? process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe' : process.env.SHELL || '/bin/bash'
 
   const env = {}
   for (const [key, value] of Object.entries(process.env)) {
@@ -64,7 +62,7 @@ app.whenReady().then(() => {
     })
   } catch (error) {
     console.error('[失败] PTY 会话创建失败')
-    console.error(error && error.message ? error.message : String(error))
+    console.error(error?.message || String(error))
     app.exit(1)
     return
   }

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileEntry, FileListResult, FilePreview } from '@shared/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronIcon, FileIcon, FolderIcon } from './icons'
 import { PreviewPane } from './PreviewPane'
 import { ResizeHandle } from './ResizeHandle'
-import { ChevronIcon, FileIcon, FolderIcon } from './icons'
 
 interface FileBrowserProps {
   projectId: string
@@ -167,7 +167,7 @@ export function FileBrowser({
     setPreview(null)
     appliedRef.current = null
     void loadDirectory('')
-  }, [projectId, loadDirectory])
+  }, [loadDirectory])
 
   /** 展开并选中某条目（含其祖先目录链） */
   const revealEntry = useCallback(
@@ -201,6 +201,7 @@ export function FileBrowser({
   }, [initialPath, revealEntry])
 
   // 预览更新后恢复滚动位置（外部保存后重载不应跳回顶部）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: preview 是刻意的触发依赖——效果体只读 ref，但必须在预览重载落定后重新写入滚动位置
   useEffect(() => {
     const body = previewHostRef.current?.querySelector('.preview-body')
     if (body === undefined || body === null) return
@@ -415,6 +416,7 @@ export function FileBrowser({
             if (row.kind === 'note') {
               return (
                 <div
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 提示行由视图动态合成，同一目录下可能重复出现相同文案，索引参与复合键是唯一可靠选择
                   key={`note-${index}`}
                   className={row.tone === 'error' ? 'tree-note error' : 'tree-note'}
                   style={{ paddingLeft: 50 + row.depth * 16 }}
@@ -429,6 +431,7 @@ export function FileBrowser({
             const isSelected = selectedPath === entry.relativePath
 
             return (
+              // biome-ignore lint/a11y/useFocusableInteractive: 文件树行由整行点击驱动；键盘树导航（方向键）属 M3 交互专项，届时统一补 tabIndex 与完整 role 语义
               <div
                 key={entry.relativePath}
                 className={isSelected ? 'tree-row selected' : 'tree-row'}
@@ -455,16 +458,8 @@ export function FileBrowser({
                   <span className="twisty placeholder" />
                 )}
 
-                <button
-                  type="button"
-                  className="tree-label"
-                  onClick={(event) => handleRowClick(event, entry)}
-                >
-                  {entry.kind === 'directory' ? (
-                    <FolderIcon className="glyph" />
-                  ) : (
-                    <FileIcon className="glyph" />
-                  )}
+                <button type="button" className="tree-label" onClick={(event) => handleRowClick(event, entry)}>
+                  {entry.kind === 'directory' ? <FolderIcon className="glyph" /> : <FileIcon className="glyph" />}
                   <span className="name">
                     {entry.name}
                     {entry.isLink ? <span className="chip chip-link">链接</span> : null}

@@ -1,9 +1,9 @@
-import { closeSync, openSync, readFileSync, readdirSync, readSync, statSync } from 'node:fs'
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import type { FileEntry, FileListResult, FilePreview, PreviewKind } from '@shared/types'
 import { resolveProjectPath } from '../security/path-guard'
 import { highlightCode, languageForExtension } from './code-highlight'
-import { readAsset, renderMarkdownFile, TEXT_PREVIEW_LIMIT_BYTES, type PreviewPolicy } from './markdown-preview'
+import { type PreviewPolicy, readAsset, renderMarkdownFile, TEXT_PREVIEW_LIMIT_BYTES } from './markdown-preview'
 
 /**
  * 文件浏览与只读预览（设计稿 4.2，M1-4／M1-5）。
@@ -389,7 +389,8 @@ export function previewFile(request: PreviewFileRequest): FilePreview {
       size: buffer.byteLength,
       truncated,
       lineCount: highlighted.lineCount,
-      message: decoded.message ?? (highlighted.plain && language !== null ? '内容较大，已跳过高亮以保证响应速度。' : null)
+      message:
+        decoded.message ?? (highlighted.plain && language !== null ? '内容较大，已跳过高亮以保证响应速度。' : null)
     }
   }
 

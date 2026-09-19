@@ -11,9 +11,7 @@
 const pty = require('node-pty')
 
 const isWindows = process.platform === 'win32'
-const shell = isWindows
-  ? process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe'
-  : process.env.SHELL || '/bin/bash'
+const shell = isWindows ? process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe' : process.env.SHELL || '/bin/bash'
 
 const command = isWindows ? 'echo PTY_OK & echo CWD=%CD%' : 'echo PTY_OK && echo CWD=$(pwd)'
 

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
 import type { AppInfo, ProjectSummary } from '@shared/types'
+import { useCallback, useEffect, useState } from 'react'
 import { ProjectSidebar } from './components/ProjectSidebar'
 import { LibraryPage } from './pages/LibraryPage'
 import { ProjectPage } from './pages/ProjectPage'
@@ -20,7 +20,8 @@ function readSidebarPreference(): boolean {
  * 布局：左侧项目侧边栏（应用级）+ 主区域（项目库或某个已打开的项目）+ 底部信息栏。
  *
  * 两个关键约定：
- * - **默认启动页为项目库首页**（C09）。「恢复上次项目」是可选开关，默认关闭，属 M2。
+ * - **默认启动页为项目库首页**（C09）。「恢复上次项目」是可选开关，默认关闭；
+ *   该开关**尚未实现**（M1 遗留，推进计划 §7 记为转入 M3），当前行为固定为停留项目库。
  * - **已打开的项目保持挂载**（仅切换可见性），因此切换项目不会终止该项目的终端会话
  *   （设计稿 6.1）。关闭项目才会卸载它并结束其会话。
  */
@@ -154,6 +155,7 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       {fatalError !== null ? (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: 提示条点击即关闭。改为可聚焦控件会引入新的焦点态，而当前环境无法人工确认视觉效果（见 P4）；键盘可达性与文件树导航一并在 M3 交互专项处理
         <p className="inline-error banner" onClick={() => setFatalError(null)}>
           {fatalError}（点击关闭）
         </p>
@@ -209,7 +211,10 @@ export default function App(): React.JSX.Element {
       {pendingCloseProjectId !== null ? (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal">
-            <h2>「{projects.find((item) => item.id === pendingCloseProjectId)?.displayName ?? '该项目'}」的终端会话正在运行</h2>
+            <h2>
+              「{projects.find((item) => item.id === pendingCloseProjectId)?.displayName ?? '该项目'}
+              」的终端会话正在运行
+            </h2>
             <p>关闭项目会结束该项目的终端会话，正在其中运行的命令会被中断。</p>
             <p className="hint">不承诺恢复原来的进程；重新打开项目后需要重新执行命令。</p>
             <div className="modal-actions">
