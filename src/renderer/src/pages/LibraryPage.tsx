@@ -36,6 +36,7 @@ export function LibraryPage({
   const [query, setQuery] = useState('')
   const [pendingRemoval, setPendingRemoval] = useState<ProjectSummary | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [relocatingId, setRelocatingId] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -64,6 +65,24 @@ export function LibraryPage({
     setNotice(result.message)
     await onRefresh()
   }, [pendingRemoval, onRefresh])
+
+  /**
+   * 重新定位：目录可能被移动或重命名，用户可指向新位置。
+   * 目录身份一旦变化，主进程会撤销信任，这里必须如实告知，不能只说「已更新」。
+   */
+  const relocate = useCallback(
+    async (project: ProjectSummary) => {
+      setRelocatingId(project.id)
+      try {
+        const result = await window.workbench.project.relocate({ projectId: project.id })
+        setNotice(result.message)
+        await onRefresh()
+      } finally {
+        setRelocatingId(null)
+      }
+    },
+    [onRefresh]
+  )
 
   return (
     <div className="library-page">
@@ -184,8 +203,21 @@ export function LibraryPage({
                   type="button"
                   onClick={() => void window.workbench.project.reveal({ projectId: project.id })}
                   disabled={!project.available}
+                  title="在系统资源管理器中打开该目录"
                 >
                   定位
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void relocate(project)}
+                  disabled={relocatingId === project.id}
+                  title={
+                    project.available
+                      ? '把这条登记指向另一个目录；目录变化后会撤销信任'
+                      : '目录已不可用，选择它的新位置以恢复这条登记'
+                  }
+                >
+                  {relocatingId === project.id ? '正在重新定位…' : '重新定位'}
                 </button>
                 <button type="button" className="danger" onClick={() => setPendingRemoval(project)}>
                   移除登记

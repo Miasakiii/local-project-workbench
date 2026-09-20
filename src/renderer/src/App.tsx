@@ -41,6 +41,8 @@ export default function App(): React.JSX.Element {
   const [pendingCloseProjectId, setPendingCloseProjectId] = useState<string | null>(null)
   /** 哪些项目有终端会话正在运行；用于在侧边栏上给出提示 */
   const [runningProjects, setRunningProjects] = useState<Record<string, boolean>>({})
+  /** 待确认退出：主进程在退出前发现有活动会话 */
+  const [pendingQuit, setPendingQuit] = useState<number | null>(null)
 
   useEffect(() => {
     try {
@@ -75,6 +77,14 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     void window.workbench.watcher.setActive({ projectId: activeProjectId })
   }, [activeProjectId])
+
+  // 退出询问：主进程已阻止退出，这里负责让用户明确选择（设计稿 6.1）。
+  // 会话仍在运行，取消后应用继续可用，不产生任何副作用。
+  useEffect(() => {
+    return window.workbench.app.onQuitRequested((payload) => {
+      setPendingQuit(payload.sessionCount)
+    })
+  }, [])
 
   // 项目被移除登记后，同步从「已打开」集合中清掉，避免留下悬空引用
   useEffect(() => {
@@ -230,6 +240,31 @@ export default function App(): React.JSX.Element {
                 }}
               >
                 结束会话并关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingQuit !== null ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal">
+            <h2>还有 {pendingQuit} 个终端会话正在运行</h2>
+            <p>退出应用会结束这些会话，正在其中运行的命令会被中断。</p>
+            <p className="hint">不承诺恢复原来的进程；下次启动后需要重新执行命令。</p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setPendingQuit(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  setPendingQuit(null)
+                  void window.workbench.app.confirmQuit({ confirmed: true })
+                }}
+              >
+                结束会话并退出
               </button>
             </div>
           </div>

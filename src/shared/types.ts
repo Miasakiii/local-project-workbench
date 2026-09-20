@@ -242,6 +242,8 @@ export type FileOperationReason =
   | 'protected-entry'
   | 'outside-project'
   | 'invalid-path'
+  | 'name-conflict'
+  | 'path-changed'
   | 'not-found'
   | 'permission-denied'
   | 'in-use'
@@ -253,21 +255,38 @@ export type FileOperationStatus = 'ok' | 'failed' | 'skipped'
 
 /** 单项操作结果。批量操作必须逐项给出，避免静默部分失败。 */
 export interface FileOperationItem {
+  /** 源路径；新建操作中表示新建出的目标路径 */
   relativePath: string
+  /** 复制、移动或新建操作的目标路径 */
+  targetRelativePath?: string | null
   status: FileOperationStatus
   reason: FileOperationReason | null
   message: string
 }
 
-export interface DeleteEntriesResult {
+/** 可复用的批量文件操作结果；失败与未执行项必须逐项列出。 */
+export interface FileOperationBatchResult {
   items: FileOperationItem[]
   ok: number
   failed: number
   skipped: number
-  /** 整批中止（未执行项已标记为 skipped） */
+  /** 整批中止（未执行项已标记为 skipped，或操作前即被整体拒绝） */
   aborted: boolean
   abortReason: FileOperationReason | null
   abortMessage: string | null
+}
+
+export type DeleteEntriesResult = FileOperationBatchResult
+export type CreateEntryResult = FileOperationBatchResult
+export type TransferEntriesResult = FileOperationBatchResult
+
+/** 单点重命名结果；源与目标都以项目内相对路径表达。 */
+export interface RenameEntryResult {
+  relativePath: string
+  targetRelativePath: string | null
+  status: FileOperationStatus
+  reason: FileOperationReason | null
+  message: string
 }
 
 /* ---------- 项目库与文件浏览（设计稿 2.1 / 2.2 / 4.2） ---------- */

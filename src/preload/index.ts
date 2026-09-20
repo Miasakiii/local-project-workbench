@@ -2,29 +2,38 @@ import type {
   AppInfoResult,
   AssetReadResult,
   AssetRequestPayload,
+  CreateEntryResult,
   DeleteEntriesResult,
+  FileCreateRequest,
   FileDeleteRequest,
   FileDiffRequest,
   FileListRequest,
   FileListResult,
   FilePreview,
   FilePreviewRequest,
+  FileRenameRequest,
+  FileTransferRequest,
   GitSnapshot,
   GitSnapshotRequest,
   OpenExternalRequest,
   OpenPathRequest,
   ProjectRef,
+  ProjectRelocateResult,
   ProjectRemoveResult,
   ProjectRevealResult,
   ProjectSummary,
   ProjectUpdateRequest,
+  QuitConfirmRequest,
+  QuitRequestedEvent,
   RegisterProjectResult,
+  RenameEntryResult,
   TerminalCreateRequest,
   TerminalCreateResult,
   TerminalDataEvent,
   TerminalExitEvent,
   TerminalResizeRequest,
   TerminalWriteRequest,
+  TransferEntriesResult,
   ViewStateRequest,
   ViewStateSaveRequest,
   WatcherSetActiveRequest
@@ -47,7 +56,22 @@ const api = {
     getInfo: (): Promise<AppInfoResult> => ipcRenderer.invoke(IpcChannel.appGetInfo),
 
     /** 打开目录选择器；取消时返回 null */
-    selectDirectory: (): Promise<string | null> => ipcRenderer.invoke(IpcChannel.dialogSelectDirectory)
+    selectDirectory: (): Promise<string | null> => ipcRenderer.invoke(IpcChannel.dialogSelectDirectory),
+
+    /**
+     * 回应「退出前存在活动会话」的询问。
+     * confirmed 为 false 时取消本次退出，应用继续运行。
+     */
+    confirmQuit: (request: QuitConfirmRequest): Promise<void> => ipcRenderer.invoke(IpcChannel.appConfirmQuit, request),
+
+    /** 订阅退出询问；返回取消订阅函数。 */
+    onQuitRequested: (listener: (payload: QuitRequestedEvent) => void): (() => void) => {
+      const handler = (_event: unknown, payload: QuitRequestedEvent): void => listener(payload)
+      ipcRenderer.on(IpcChannel.appQuitRequested, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.appQuitRequested, handler)
+      }
+    }
   },
 
   project: {
@@ -69,6 +93,13 @@ const api = {
     /** 在系统资源管理器中打开项目目录 */
     reveal: (request: ProjectRef): Promise<ProjectRevealResult> =>
       ipcRenderer.invoke(IpcChannel.projectReveal, request),
+
+    /**
+     * 把登记重新定位到另一个目录。身份变化会撤销信任，需要用户重新确认。
+     * 取消选择时返回 status 为 cancelled。
+     */
+    relocate: (request: ProjectRef): Promise<ProjectRelocateResult> =>
+      ipcRenderer.invoke(IpcChannel.projectRelocate, request),
 
     /** README 识别结果：选中项与多语言变体 */
     readme: (request: ProjectRef): Promise<ReadmeDetection> => ipcRenderer.invoke(IpcChannel.projectReadme, request)
@@ -92,7 +123,19 @@ const api = {
 
     /** 删除到系统回收站；不可回收时整批停止并说明 */
     deleteToTrash: (request: FileDeleteRequest): Promise<DeleteEntriesResult> =>
-      ipcRenderer.invoke(IpcChannel.fileDelete, request)
+      ipcRenderer.invoke(IpcChannel.fileDelete, request),
+
+    /** 新建空文件或空文件夹，不覆盖同名目标 */
+    create: (request: FileCreateRequest): Promise<CreateEntryResult> =>
+      ipcRenderer.invoke(IpcChannel.fileCreate, request),
+
+    /** 在同一项目内复制或剪切粘贴，逐项报告结果 */
+    transfer: (request: FileTransferRequest): Promise<TransferEntriesResult> =>
+      ipcRenderer.invoke(IpcChannel.fileTransfer, request),
+
+    /** 在同一父目录内重命名单个文件或文件夹 */
+    rename: (request: FileRenameRequest): Promise<RenameEntryResult> =>
+      ipcRenderer.invoke(IpcChannel.fileRename, request)
   },
 
   git: {

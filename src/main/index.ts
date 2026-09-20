@@ -1,5 +1,6 @@
 import { join } from 'node:path'
-import type { ProjectSummary } from '@shared/ipc'
+import type { ProjectSummary, QuitRequestedEvent } from '@shared/ipc'
+import { IpcChannel } from '@shared/ipc'
 import type { Project } from '@shared/types'
 import { app, BrowserWindow, shell } from 'electron'
 import { createHandle, type IpcContext, registerIpcHandlers } from './ipc'
@@ -7,6 +8,7 @@ import { ProjectWatcher } from './modules/file-watcher'
 import { detectReadme, extractSummary } from './modules/markdown-preview'
 import { createRegistry, createRegistryStore, type ProjectRegistry, toSummary } from './modules/project-registry'
 import { PtySessionManager } from './modules/pty-session'
+import { createQuitCoordinator } from './modules/quit-coordinator'
 
 /**
  * 主进程入口。
@@ -87,6 +89,38 @@ function listProjects(): ProjectSummary[] {
   return summaries
 }
 
+/* ---------------- 退出协调（设计稿 6.1） ---------------- */
+
+function liveWindow(): BrowserWindow | null {
+  return BrowserWindow.getAllWindows().find((item) => !item.isDestroyed()) ?? null
+}
+
+/** 清理进程级服务；可重复调用。 */
+function disposeServices(): void {
+  terminals.disposeAll()
+  watcher.dispose()
+}
+
+/**
+ * 退出前若仍有活动终端会话，先询问用户，不静默中断正在运行的命令。
+ * 判定与状态机在 `quit-coordinator.ts`，本文件只提供 Electron 侧的能力。
+ */
+const quitCoordinator = createQuitCoordinator({
+  activeSessionCount: () => terminals.activeCount,
+  canPrompt: () => {
+    const window = liveWindow()
+    return window !== null && !window.webContents.isDestroyed()
+  },
+  prompt: (sessionCount) => {
+    const window = liveWindow()
+    if (window === null) return
+    const payload: QuitRequestedEvent = { sessionCount }
+    window.webContents.send(IpcChannel.appQuitRequested, payload)
+  },
+  disposeServices,
+  quit: () => app.quit()
+})
+
 /* ---------------- 窗口 ---------------- */
 
 function createWindow(): BrowserWindow {
@@ -110,6 +144,16 @@ function createWindow(): BrowserWindow {
 
   window.once('ready-to-show', () => {
     window.show()
+  })
+
+  // 关闭窗口同样属于「退出」，因此与 before-quit 共用同一套询问逻辑。
+  window.on('close', (event) => {
+    if (quitCoordinator.requestQuit()) event.preventDefault()
+  })
+
+  // 渲染进程崩溃后无人能回应询问：视为无法确认，直接结束，避免应用卡在无法关闭的状态。
+  window.webContents.on('render-process-gone', () => {
+    quitCoordinator.abandonPrompt()
   })
 
   // 限制窗口创建：一律拒绝，外链交给系统浏览器且仅允许 http/https
@@ -152,7 +196,8 @@ function createIpcContext(): IpcContext {
       descriptionCache.delete(projectId)
     },
     terminals,
-    watcher
+    watcher,
+    resolveQuit: (confirmed) => quitCoordinator.resolve(confirmed)
   }
 }
 
@@ -173,10 +218,13 @@ app.on('window-all-closed', () => {
 })
 
 // 设计稿 6.1：退出前处理活动会话，不静默遗留
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (quitCoordinator.requestQuit()) {
+    event.preventDefault()
+    return
+  }
   if (terminals.activeCount > 0) {
     console.info(`[终端] 退出前清理 ${terminals.activeCount} 个活动会话`)
   }
-  terminals.disposeAll()
-  watcher.dispose()
+  quitCoordinator.finalize()
 })

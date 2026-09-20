@@ -31,10 +31,13 @@
     "smoke:m1": "node scripts/smoke-m1.cjs",
     "measure:m0-7": "node scripts/measure-framework-m0.cjs 5 --sizes",
     "verify:m0": "npm run verify:m0-4 && npm run verify:m0-5 && npm run verify:m0-5:trash && npm run verify:m0-6",
-    "verify:all": "npm run lint && npm run typecheck && npm run build && npm run verify:m0 && npm run verify:m1 && npm run verify:m2 && npm run smoke:m1",
+    "verify:all": "npm run lint && npm run typecheck && npm run build && npm run verify:m0 && npm run verify:m1 && npm run verify:m2 && npm run verify:m3-1 && npm run verify:m3-file-ops && npm run verify:m3-lifecycle && npm run smoke:m1",
     "verify:m2-diff": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m2-diff.mts",
     "verify:m2-degrade": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m2-degrade.mts",
-    "verify:m2": "npm run verify:m2-diff && npm run verify:m2-degrade"
+    "verify:m2": "npm run verify:m2-diff && npm run verify:m2-degrade",
+    "verify:m3-1": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m3-rename.mts",
+    "verify:m3-file-ops": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m3-file-ops.mts",
+    "verify:m3-lifecycle": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m3-lifecycle.mts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

@@ -116,6 +116,20 @@ export interface RegisterOutcome {
   message: string | null
 }
 
+/**
+ * 重新定位的结果。
+ *
+ * `trustReset` 是安全语义的核心：一旦目录身份发生变化，原信任不再适用于新目录，
+ * 必须由用户重新确认（设计稿 3.2「重新定位与信任重确认」）。
+ */
+export interface RelocateOutcome {
+  status: 'relocated' | 'unchanged' | 'unavailable' | 'duplicate' | 'not-found'
+  project: Project | null
+  message: string
+  /** 是否因路径身份变化而重置了信任状态 */
+  trustReset: boolean
+}
+
 /** 计算目录的真实路径身份。失败表示目录不存在或不可访问。 */
 export function computeIdentity(directory: string): { ok: true; identity: string } | { ok: false; reason: string } {
   if (typeof directory !== 'string' || directory.length === 0) {
@@ -200,6 +214,79 @@ export class ProjectRegistry {
     const data = this.data()
     this.persist({ ...data, projects: [...data.projects, project] })
     return { status: 'added', project, message: null }
+  }
+
+  /**
+   * 把登记重新定位到另一个目录（设计稿 3.2）。
+   *
+   * 三条不可协商的规则：
+   * 1. **新目录必须真实存在且是文件夹**，与登记时同样严格；
+   * 2. **不得与其它已登记项目指向同一真实路径**，否则会产生两条记录指向一个目录；
+   * 3. **目录身份一旦变化就重置信任**。信任授予的是「这个目录」，不是「这条记录」，
+   *    换目录后沿用旧信任等于让用户在没有重新确认的情况下把写权限交给另一个目录。
+   *
+   * 重新定位不移动、不复制、不创建任何磁盘内容；旧目录原样保留。
+   */
+  relocate(projectId: string, directory: string): RelocateOutcome {
+    const current = this.get(projectId)
+    if (current === null) {
+      return { status: 'not-found', project: null, message: '该项目不在登记列表中。', trustReset: false }
+    }
+
+    const identityResult = computeIdentity(directory)
+    if (!identityResult.ok) {
+      return {
+        status: 'unavailable',
+        project: current,
+        message: `新目录不可用：${identityResult.reason}`,
+        trustReset: false
+      }
+    }
+
+    const occupied = this.data().projects.find(
+      (project) => project.id !== projectId && project.normalizedIdentity === identityResult.identity
+    )
+    if (occupied !== undefined) {
+      return {
+        status: 'duplicate',
+        project: current,
+        message: `该目录已由「${occupied.displayName}」登记，未重复指向同一目录。`,
+        trustReset: false
+      }
+    }
+
+    if (identityResult.identity === current.normalizedIdentity) {
+      return {
+        status: 'unchanged',
+        project: current,
+        message: '新目录与当前登记位置相同，未做改动。',
+        trustReset: false
+      }
+    }
+
+    const trustReset = current.trusted
+    const next: Project = {
+      ...current,
+      originalPath: resolve(directory),
+      normalizedIdentity: identityResult.identity,
+      // 身份变化即撤销信任：新目录必须重新确认后才允许写操作与终端
+      trusted: false
+    }
+
+    const data = this.data()
+    this.persist({
+      ...data,
+      projects: data.projects.map((project) => (project.id === projectId ? next : project))
+    })
+
+    return {
+      status: 'relocated',
+      project: next,
+      message: trustReset
+        ? '已重新定位到新目录。目录已变化，原信任已撤销，请重新确认后再执行写操作或使用终端。'
+        : '已重新定位到新目录。',
+      trustReset
+    }
   }
 
   /** 移除登记。**只删除记录，不动磁盘文件**（设计稿 3.2）。 */

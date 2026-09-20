@@ -339,5 +339,5 @@ export function isSameLocation(a: string, b: string): boolean {
 export function isProtectedEntry(normalized: string): boolean {
   const first = normalized.split('/').filter(Boolean)[0]
   if (first === undefined) return true // 项目根本身
-  return first === '.git'
+  return process.platform === 'win32' ? first.toLowerCase() === '.git' : first === '.git'
 }

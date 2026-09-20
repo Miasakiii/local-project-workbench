@@ -1,4 +1,4 @@
-import type { FileEntry, FileListResult, FilePreview } from '@shared/types'
+import type { FileEntry, FileListResult, FileOperationBatchResult, FilePreview } from '@shared/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronIcon, FileIcon, FolderIcon } from './icons'
 import { PreviewPane } from './PreviewPane'
@@ -6,6 +6,8 @@ import { ResizeHandle } from './ResizeHandle'
 
 interface FileBrowserProps {
   projectId: string
+  /** 项目是否已被用户信任；未信任时写操作按钮不可用 */
+  trusted: boolean
   /** 需要定位并选中的条目（来自视图状态恢复） */
   initialPath: string
   /** 左侧树栏宽度（像素） */
@@ -28,6 +30,19 @@ interface DirectoryState {
 type Row =
   | { kind: 'entry'; depth: number; entry: FileEntry }
   | { kind: 'note'; depth: number; text: string; tone: 'plain' | 'error' }
+
+type ClipboardMode = 'copy' | 'move'
+
+interface ClipboardState {
+  mode: ClipboardMode
+  paths: string[]
+}
+
+interface OperationNotice {
+  tone: 'success' | 'error'
+  title: string
+  details: string[]
+}
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '—'
@@ -64,16 +79,40 @@ function ancestorDirectories(relativePath: string): string[] {
   return trail
 }
 
+function parentDirectoryOf(relativePath: string): string {
+  const separator = relativePath.lastIndexOf('/')
+  return separator < 0 ? '' : relativePath.slice(0, separator)
+}
+
+function operationReport(result: FileOperationBatchResult, action: string): OperationNotice {
+  const title = `${action}完成：成功 ${result.ok} 项，失败 ${result.failed} 项，未执行 ${result.skipped} 项`
+  const details: string[] = []
+  if (result.abortMessage !== null) details.push(result.abortMessage)
+  for (const item of result.items) {
+    if (item.status === 'ok') continue
+    const target =
+      item.targetRelativePath === undefined || item.targetRelativePath === null ? '' : ` → ${item.targetRelativePath}`
+    details.push(`${item.status === 'skipped' ? '未执行' : '失败'}：${item.relativePath}${target}：${item.message}`)
+  }
+  return {
+    tone: result.failed > 0 || result.skipped > 0 || result.aborted ? 'error' : 'success',
+    title,
+    details: [...new Set(details)]
+  }
+}
+
 /**
  * 文件树与只读预览（设计稿 4.2，M1-4）。
  *
  * 目录以树形展开，子目录**按需加载**（展开时才列举，不做无边界预读）。
  *
- * 边界：只读，没有新建／重命名／删除入口（属 M3）；Git 忽略的文件照常列出；
+ * 边界：预览仍只读；M3 已加入新建、复制／剪切粘贴、重命名与删除，均限制在当前项目内；
+ * Git 忽略的文件照常列出；跨项目／跨卷移动交给系统资源管理器。
  * 目录读取失败、条目截断、不可用条目都在原位说明，不显示空白成功页。
  */
 export function FileBrowser({
   projectId,
+  trusted,
   initialPath,
   paneWidth,
   refreshToken,
@@ -85,12 +124,17 @@ export function FileBrowser({
   const [dirs, setDirs] = useState<Record<string, DirectoryState>>({})
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set())
   const [selectedEntry, setSelectedEntry] = useState<FileEntry | null>(null)
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [loadingPreview, setLoadingPreview] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [operationBusy, setOperationBusy] = useState(false)
+  const [clipboard, setClipboard] = useState<ClipboardState | null>(null)
+  const [operationNotice, setOperationNotice] = useState<OperationNotice | null>(null)
 
   const generationRef = useRef(0)
+  const selectedPathsRef = useRef<Set<string>>(new Set())
   const selectedEntryRef = useRef<FileEntry | null>(null)
   const expandedRef = useRef<Set<string>>(new Set())
   const appliedRef = useRef<string | null>(null)
@@ -162,6 +206,8 @@ export function FileBrowser({
     generationRef.current += 1
     setDirs({})
     setExpanded(new Set())
+    selectedPathsRef.current = new Set()
+    setSelectedPaths(new Set())
     setSelectedPath(null)
     setSelectedEntry(null)
     setPreview(null)
@@ -185,6 +231,10 @@ export function FileBrowser({
       const entry = parentResult?.entries.find((item) => item.relativePath === relativePath) ?? null
       if (entry === null || !select) return entry
 
+      const nextSelection = new Set([entry.relativePath])
+      selectedPathsRef.current = nextSelection
+      setSelectedPaths(nextSelection)
+      selectedEntryRef.current = entry
       setSelectedPath(entry.relativePath)
       setSelectedEntry(entry)
       if (entry.kind === 'file') openPreview(entry)
@@ -199,6 +249,216 @@ export function FileBrowser({
     if (initialPath.length === 0) return
     void revealEntry(initialPath, true)
   }, [initialPath, revealEntry])
+
+  const selectedCount = selectedPaths.size
+  const selectedPathList = useCallback((): string[] => [...selectedPathsRef.current], [])
+
+  const clearSelection = useCallback(() => {
+    selectedPathsRef.current = new Set()
+    setSelectedPaths(new Set())
+    setSelectedPath(null)
+    setSelectedEntry(null)
+    selectedEntryRef.current = null
+    setPreview(null)
+    previewScrollRef.current = 0
+    onPathChange('')
+  }, [onPathChange])
+
+  const refreshLoadedDirectories = useCallback(async () => {
+    generationRef.current += 1
+    await Promise.all(['', ...expanded].map((directory) => loadDirectory(directory)))
+  }, [expanded, loadDirectory])
+
+  const targetDirectory =
+    selectedEntry === null
+      ? ''
+      : selectedEntry.kind === 'directory'
+        ? selectedEntry.relativePath
+        : parentDirectoryOf(selectedEntry.relativePath)
+
+  const keepFailedSelection = useCallback(
+    (result: FileOperationBatchResult) => {
+      const remaining = result.items.filter((item) => item.status !== 'ok').map((item) => item.relativePath)
+      if (remaining.length === 0) {
+        clearSelection()
+        return
+      }
+      const next = new Set(remaining)
+      selectedPathsRef.current = next
+      setSelectedPaths(next)
+      setSelectedPath(remaining[0] ?? null)
+      setSelectedEntry(null)
+      selectedEntryRef.current = null
+      setPreview(null)
+      onPathChange(remaining[0] ?? '')
+    },
+    [clearSelection, onPathChange]
+  )
+
+  const firstSuccessfulTarget = useCallback((result: FileOperationBatchResult): string | null => {
+    for (const item of result.items) {
+      if (item.status === 'ok' && item.targetRelativePath !== undefined && item.targetRelativePath !== null) {
+        return item.targetRelativePath
+      }
+    }
+    return null
+  }, [])
+
+  const revealSuccessfulTarget = useCallback(
+    async (result: FileOperationBatchResult) => {
+      const target = firstSuccessfulTarget(result)
+      if (target === null) return
+      await refreshLoadedDirectories()
+      await revealEntry(target, true)
+      onPathChange(target)
+    },
+    [firstSuccessfulTarget, onPathChange, refreshLoadedDirectories, revealEntry]
+  )
+
+  const renameSelected = useCallback(async () => {
+    if (selectedEntry === null || selectedCount !== 1 || operationBusy) return
+    const nextName = window.prompt('将项目内条目重命名为：', selectedEntry.name)
+    if (nextName === null) return
+
+    setOperationBusy(true)
+    setOperationNotice(null)
+    try {
+      const result = await window.workbench.file.rename({
+        projectId,
+        relativePath: selectedEntry.relativePath,
+        newName: nextName
+      })
+      if (result.status !== 'ok' || result.targetRelativePath === null) {
+        setOperationNotice({ tone: 'error', title: result.message, details: [] })
+        return
+      }
+
+      setOperationNotice({ tone: 'success', title: result.message, details: [] })
+      generationRef.current += 1
+      selectedEntryRef.current = null
+      setDirs({})
+      setExpanded(new Set())
+      clearSelection()
+      onPathChange(result.targetRelativePath)
+      await revealEntry(result.targetRelativePath, true)
+    } catch (error) {
+      setOperationNotice({
+        tone: 'error',
+        title: error instanceof Error ? error.message : String(error),
+        details: []
+      })
+    } finally {
+      setOperationBusy(false)
+    }
+  }, [clearSelection, onPathChange, operationBusy, projectId, revealEntry, selectedCount, selectedEntry])
+
+  const createNewEntry = useCallback(
+    async (kind: 'file' | 'directory') => {
+      if (!trusted || operationBusy) return
+      const label = kind === 'file' ? '文件' : '文件夹'
+      const name = window.prompt(`在「${targetDirectory.length === 0 ? '项目根' : targetDirectory}」中新建${label}：`)
+      if (name === null) return
+
+      setOperationBusy(true)
+      setOperationNotice(null)
+      try {
+        const result = await window.workbench.file.create({
+          projectId,
+          parentRelativePath: targetDirectory,
+          name,
+          kind
+        })
+        setOperationNotice(operationReport(result, `新建${label}`))
+        await revealSuccessfulTarget(result)
+      } catch (error) {
+        setOperationNotice({
+          tone: 'error',
+          title: error instanceof Error ? error.message : String(error),
+          details: []
+        })
+      } finally {
+        setOperationBusy(false)
+      }
+    },
+    [operationBusy, projectId, revealSuccessfulTarget, targetDirectory, trusted]
+  )
+
+  const setClipboardFromSelection = useCallback(
+    (mode: ClipboardMode) => {
+      const paths = selectedPathList()
+      if (paths.length === 0 || !trusted) return
+      setClipboard({ mode, paths })
+      setOperationNotice({
+        tone: 'success',
+        title: `${mode === 'copy' ? '已复制' : '已剪切'} ${paths.length} 项，选择目标目录后点击「粘贴」。`,
+        details: []
+      })
+    },
+    [selectedPathList, trusted]
+  )
+
+  const pasteClipboard = useCallback(async () => {
+    if (clipboard === null || clipboard.paths.length === 0 || !trusted || operationBusy) return
+
+    setOperationBusy(true)
+    setOperationNotice(null)
+    try {
+      const result = await window.workbench.file.transfer({
+        projectId,
+        relativePaths: clipboard.paths,
+        targetDirectory,
+        mode: clipboard.mode
+      })
+      setOperationNotice(operationReport(result, clipboard.mode === 'copy' ? '复制粘贴' : '剪切粘贴'))
+      if (clipboard.mode === 'move') {
+        const remaining = result.items.filter((item) => item.status !== 'ok').map((item) => item.relativePath)
+        setClipboard(remaining.length === 0 ? null : { mode: 'move', paths: remaining })
+      }
+      if (result.ok > 0) await revealSuccessfulTarget(result)
+    } catch (error) {
+      setOperationNotice({
+        tone: 'error',
+        title: error instanceof Error ? error.message : String(error),
+        details: []
+      })
+    } finally {
+      setOperationBusy(false)
+    }
+  }, [clipboard, operationBusy, projectId, revealSuccessfulTarget, targetDirectory, trusted])
+
+  const deleteSelected = useCallback(async () => {
+    const paths = selectedPathList()
+    if (paths.length === 0 || !trusted || operationBusy) return
+    const previewPaths = paths
+      .slice(0, 8)
+      .map((path) => `• ${path}`)
+      .join('\\n')
+    const suffix = paths.length > 8 ? `\\n…以及另外 ${paths.length - 8} 项` : ''
+    if (
+      !window.confirm(
+        `将所选 ${paths.length} 项发送到系统回收站？\\n\\n${previewPaths}${suffix}\\n\\n项目根与 .git 元数据不会被删除。`
+      )
+    ) {
+      return
+    }
+
+    setOperationBusy(true)
+    setOperationNotice(null)
+    try {
+      const result = await window.workbench.file.deleteToTrash({ projectId, relativePaths: paths })
+      setOperationNotice(operationReport(result, '删除'))
+      await refreshLoadedDirectories()
+      keepFailedSelection(result)
+    } catch (error) {
+      setOperationNotice({
+        tone: 'error',
+        title: error instanceof Error ? error.message : String(error),
+        details: []
+      })
+    } finally {
+      setOperationBusy(false)
+    }
+  }, [keepFailedSelection, operationBusy, projectId, refreshLoadedDirectories, selectedPathList, trusted])
 
   // 预览更新后恢复滚动位置（外部保存后重载不应跳回顶部）
   // biome-ignore lint/correctness/useExhaustiveDependencies: preview 是刻意的触发依赖——效果体只读 ref，但必须在预览重载落定后重新写入滚动位置
@@ -257,7 +517,26 @@ export function FileBrowser({
   /* ---------- 选择 ---------- */
 
   const selectEntry = useCallback(
-    (entry: FileEntry) => {
+    (entry: FileEntry, additive: boolean) => {
+      const current = selectedPathsRef.current
+      const next = additive ? new Set(current) : new Set<string>()
+      if (additive && next.has(entry.relativePath)) {
+        next.delete(entry.relativePath)
+      } else {
+        next.add(entry.relativePath)
+      }
+      selectedPathsRef.current = next
+      setSelectedPaths(next)
+
+      if (!next.has(entry.relativePath)) {
+        setSelectedPath(null)
+        setSelectedEntry(null)
+        selectedEntryRef.current = null
+        setPreview(null)
+        onPathChange('')
+        return
+      }
+
       selectedEntryRef.current = entry
       setSelectedPath(entry.relativePath)
       setSelectedEntry(entry)
@@ -277,8 +556,10 @@ export function FileBrowser({
   const handleRowClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>, entry: FileEntry) => {
       if (event.detail > 1) return
-      selectEntry(entry)
-      if (entry.kind === 'directory') toggleDirectory(entry.relativePath)
+      const additive = event.ctrlKey || event.metaKey
+      selectEntry(entry, additive)
+      // Ctrl/Cmd-click 用于多选，不改变目录展开状态；普通点击保持资源管理器语义。
+      if (!additive && entry.kind === 'directory') toggleDirectory(entry.relativePath)
     },
     [selectEntry, toggleDirectory]
   )
@@ -363,8 +644,11 @@ export function FileBrowser({
             type="button"
             onClick={() => {
               appliedRef.current = ''
+              selectedPathsRef.current = new Set()
+              setSelectedPaths(new Set())
               setSelectedPath(null)
               setSelectedEntry(null)
+              selectedEntryRef.current = null
               setPreview(null)
               onPathChange('')
             }}
@@ -389,13 +673,80 @@ export function FileBrowser({
           <button type="button" onClick={collapseAll} disabled={expanded.size === 0}>
             收起全部
           </button>
-          <button type="button" onClick={refreshAll}>
+          <button type="button" onClick={refreshAll} disabled={operationBusy}>
             刷新
           </button>
-          <button type="button" onClick={() => void openExternally()} disabled={selectedEntry === null}>
+          <button
+            type="button"
+            onClick={() => void createNewEntry('file')}
+            disabled={!trusted || operationBusy}
+            title={trusted ? '在当前目标目录新建空文件' : '请先信任项目，才能执行文件操作'}
+          >
+            新建文件
+          </button>
+          <button
+            type="button"
+            onClick={() => void createNewEntry('directory')}
+            disabled={!trusted || operationBusy}
+            title={trusted ? '在当前目标目录新建空文件夹' : '请先信任项目，才能执行文件操作'}
+          >
+            新建文件夹
+          </button>
+          <button
+            type="button"
+            onClick={() => setClipboardFromSelection('copy')}
+            disabled={selectedCount === 0 || !trusted || operationBusy}
+            title="复制所选项目，之后选择目标目录并粘贴"
+          >
+            复制{selectedCount > 0 ? `（${selectedCount}）` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => setClipboardFromSelection('move')}
+            disabled={selectedCount === 0 || !trusted || operationBusy}
+            title="剪切所选项目，之后选择目标目录并粘贴"
+          >
+            剪切{selectedCount > 0 ? `（${selectedCount}）` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => void pasteClipboard()}
+            disabled={clipboard === null || clipboard.paths.length === 0 || !trusted || operationBusy}
+            title={
+              clipboard === null ? '剪贴板为空' : `粘贴到${targetDirectory.length === 0 ? '项目根' : targetDirectory}`
+            }
+          >
+            粘贴{clipboard === null ? '' : `（${clipboard.paths.length}）`}
+          </button>
+          <button
+            type="button"
+            onClick={() => void renameSelected()}
+            disabled={selectedEntry === null || selectedCount !== 1 || operationBusy || !trusted}
+            title={trusted ? '在同一父目录内重命名单个条目' : '请先信任项目，才能执行文件操作'}
+          >
+            {operationBusy ? '处理中…' : '重命名'}
+          </button>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => void deleteSelected()}
+            disabled={selectedCount === 0 || !trusted || operationBusy}
+            title={trusted ? '将所选项目发送到系统回收站' : '请先信任项目，才能执行文件操作'}
+          >
+            删除{selectedCount > 0 ? `（${selectedCount}）` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => void openExternally()}
+            disabled={selectedEntry === null || selectedCount !== 1}
+          >
             用默认程序打开
           </button>
-          <button type="button" onClick={() => void revealInSystem()} disabled={selectedEntry === null}>
+          <button
+            type="button"
+            onClick={() => void revealInSystem()}
+            disabled={selectedEntry === null || selectedCount !== 1}
+          >
             在资源管理器中定位
           </button>
           <button type="button" onClick={() => onOpenTerminalAt(terminalDirectory)}>
@@ -403,6 +754,22 @@ export function FileBrowser({
           </button>
         </div>
       </div>
+
+      {operationNotice !== null ? (
+        <div
+          className={operationNotice.tone === 'error' ? 'file-operation-note error' : 'file-operation-note'}
+          role="status"
+        >
+          <strong>{operationNotice.title}</strong>
+          {operationNotice.details.length > 0 ? (
+            <ul>
+              {operationNotice.details.map((detail) => (
+                <li key={detail}>{detail}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="browser-split" ref={splitRef}>
         <div className="file-tree" role="tree" style={{ width: paneWidth }}>
@@ -428,7 +795,7 @@ export function FileBrowser({
 
             const entry = row.entry
             const isExpanded = expanded.has(entry.relativePath)
-            const isSelected = selectedPath === entry.relativePath
+            const isSelected = selectedPaths.has(entry.relativePath)
 
             return (
               // biome-ignore lint/a11y/useFocusableInteractive: 文件树行由整行点击驱动；键盘树导航（方向键）属 M3 交互专项，届时统一补 tabIndex 与完整 role 语义

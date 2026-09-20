@@ -335,6 +335,7 @@ export function ProjectPage({
         {page === 'files' && restored ? (
           <FileBrowser
             projectId={project.id}
+            trusted={project.trusted}
             initialPath={filePath}
             paneWidth={filesPaneWidth}
             refreshToken={changeToken}

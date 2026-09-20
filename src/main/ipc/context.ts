@@ -24,4 +24,9 @@ export interface IpcContext {
   invalidateDescription(projectId: string): void
   terminals: PtySessionManager
   watcher: ProjectWatcher
+  /**
+   * 渲染进程对「退出前存在活动会话」询问的回应。
+   * confirmed 为 true 时结束会话并退出；为 false 时取消本次退出。
+   */
+  resolveQuit(confirmed: boolean): void
 }

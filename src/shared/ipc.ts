@@ -1,10 +1,12 @@
 import type {
   AppInfo,
   AssetReadResult,
+  CreateEntryResult,
   DeleteEntriesResult,
   DiffScope,
   FileDiff,
   FileListResult,
+  FileOperationBatchResult,
   FileOperationItem,
   FilePreview,
   GitSnapshot,
@@ -12,7 +14,9 @@ import type {
   ProjectChangedEvent,
   ProjectPage,
   ProjectSummary,
-  ReadmeDetection
+  ReadmeDetection,
+  RenameEntryResult,
+  TransferEntriesResult
 } from './types'
 
 /**
@@ -26,6 +30,8 @@ import type {
  */
 export const IpcChannel = {
   appGetInfo: 'app:get-info',
+  appConfirmQuit: 'app:confirm-quit',
+  appQuitRequested: 'app:quit-requested',
   dialogSelectDirectory: 'dialog:select-directory',
 
   projectList: 'project:list',
@@ -34,6 +40,7 @@ export const IpcChannel = {
   projectUpdate: 'project:update',
   projectOpen: 'project:open',
   projectReveal: 'project:reveal',
+  projectRelocate: 'project:relocate',
   projectReadme: 'project:readme',
 
   viewStateGet: 'view-state:get',
@@ -42,6 +49,9 @@ export const IpcChannel = {
   fileList: 'file:list',
   filePreview: 'file:preview',
   fileDelete: 'file:delete',
+  fileCreate: 'file:create',
+  fileRename: 'file:rename',
+  fileTransfer: 'file:transfer',
   markdownReadAsset: 'markdown:read-asset',
 
   gitSnapshot: 'git:snapshot',
@@ -104,6 +114,27 @@ export interface ProjectRevealResult {
   message: string | null
 }
 
+export interface ProjectRelocateResult {
+  status: 'relocated' | 'unchanged' | 'unavailable' | 'duplicate' | 'not-found' | 'cancelled'
+  project: ProjectSummary | null
+  message: string
+  /** 是否因目录身份变化而撤销了信任，界面据此提示用户重新确认 */
+  trustReset: boolean
+}
+
+/* ---------- 退出确认 ---------- */
+
+/** 主进程 → 渲染进程：退出前存在活动终端会话，需要用户确认 */
+export interface QuitRequestedEvent {
+  /** 正在运行的终端会话数量 */
+  sessionCount: number
+}
+
+export interface QuitConfirmRequest {
+  /** true 表示确认退出（会话将被结束）；false 表示取消退出 */
+  confirmed: boolean
+}
+
 /* ---------- 视图状态 ---------- */
 
 export interface ViewStateRequest {
@@ -134,6 +165,30 @@ export interface FilePreviewRequest {
 export interface FileDeleteRequest {
   projectId: string
   relativePaths: string[]
+}
+
+export interface FileCreateRequest {
+  projectId: string
+  /** 新建目标所在的项目内目录；空串表示项目根 */
+  parentRelativePath: string
+  name: string
+  kind: 'file' | 'directory'
+}
+
+export interface FileRenameRequest {
+  projectId: string
+  relativePath: string
+  /** 同一父目录内的新名称；不接受路径分隔符 */
+  newName: string
+}
+
+export interface FileTransferRequest {
+  projectId: string
+  /** 复制/剪切的项目内源路径；由主进程去重并逐项报告 */
+  relativePaths: string[]
+  /** 粘贴目标目录；空串表示项目根 */
+  targetDirectory: string
+  mode: 'copy' | 'move'
 }
 
 export interface AssetRequestPayload {
@@ -212,10 +267,12 @@ export interface TerminalExitEvent {
 
 export type {
   AssetReadResult,
+  CreateEntryResult,
   DeleteEntriesResult,
   DiffScope,
   FileDiff,
   FileListResult,
+  FileOperationBatchResult,
   FileOperationItem,
   FilePreview,
   GitSnapshot,
@@ -223,5 +280,7 @@ export type {
   ProjectChangedEvent,
   ProjectPage,
   ProjectSummary,
-  ReadmeDetection
+  ReadmeDetection,
+  RenameEntryResult,
+  TransferEntriesResult
 }

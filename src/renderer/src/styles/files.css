@@ -16,6 +16,35 @@
   flex-wrap: wrap;
 }
 
+.file-operation-note {
+  margin: -4px 0 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  background: rgba(52, 199, 89, 0.1);
+  color: #187a37;
+  font-size: 12px;
+}
+
+.file-operation-note strong {
+  display: block;
+  font-weight: 600;
+}
+
+.file-operation-note ul {
+  margin: 5px 0 0;
+  padding-left: 18px;
+  color: inherit;
+}
+
+.file-operation-note li + li {
+  margin-top: 3px;
+}
+
+.file-operation-note.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .breadcrumb {
   display: flex;
   align-items: center;

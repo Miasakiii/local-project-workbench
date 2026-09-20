@@ -1,5 +1,6 @@
 import type {
   ProjectRef,
+  ProjectRelocateResult,
   ProjectRemoveResult,
   ProjectRevealResult,
   ProjectSummary,
@@ -15,7 +16,7 @@ import { detectRepository } from '../modules/git-query'
 import { detectReadme } from '../modules/markdown-preview'
 import { toSummary } from '../modules/project-registry'
 import type { IpcContext } from './context'
-import { pickDirectory } from './dialogs'
+import { pickDirectory, pickRelocateDirectory } from './dialogs'
 
 /** 项目登记、元数据与视图状态。 */
 export function registerProjectIpc(ctx: IpcContext): void {
@@ -80,6 +81,37 @@ export function registerProjectIpc(ctx: IpcContext): void {
     if (!resolved.ok) return { opened: false, message: resolved.reason }
     const error = await shell.openPath(resolved.root)
     return { opened: error.length === 0, message: error.length === 0 ? null : error }
+  })
+
+  ctx.handle(IpcChannel.projectRelocate, async (event, request: ProjectRef): Promise<ProjectRelocateResult> => {
+    const directory = await pickRelocateDirectory(event)
+    if (directory === null) {
+      return { status: 'cancelled', project: null, message: '已取消重新定位。', trustReset: false }
+    }
+
+    const outcome = ctx.registry().relocate(request.projectId, directory)
+    ctx.invalidateDescription(request.projectId)
+
+    if (outcome.status !== 'relocated' || outcome.project === null) {
+      return {
+        status: outcome.status,
+        project: outcome.project === null ? null : toSummary(outcome.project, (item) => ctx.describe(item)),
+        message: outcome.message,
+        trustReset: outcome.trustReset
+      }
+    }
+
+    // 目录已变：Git 属性必须重新探测，不能沿用旧目录的结论（C08）
+    const detected = await detectRepository(outcome.project.normalizedIdentity)
+    const refreshed = ctx.registry().update(outcome.project.id, { isGitRepository: detected })
+    ctx.invalidateDescription(request.projectId)
+
+    return {
+      status: 'relocated',
+      project: refreshed === null ? null : toSummary(refreshed, (item) => ctx.describe(item)),
+      message: outcome.message,
+      trustReset: outcome.trustReset
+    }
   })
 
   ctx.handle(IpcChannel.projectReadme, (_event, request: ProjectRef): ReadmeDetection => {

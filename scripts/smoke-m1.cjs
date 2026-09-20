@@ -136,11 +136,16 @@ function runChild() {
   const fixtureRoot = path.join(os.tmpdir(), 'workbench-smoke-m1')
   const projectDir = path.join(fixtureRoot, 'project')
   const secondDir = path.join(fixtureRoot, 'second-project')
+  /** 重新定位的目标目录：模拟「第二项目」被移动后的新位置 */
+  const relocatedDir = path.join(fixtureRoot, 'second-project-moved')
 
   function buildFixture() {
     removeTree(fixtureRoot)
     fs.mkdirSync(path.join(projectDir, 'assets'), { recursive: true })
     fs.mkdirSync(path.join(projectDir, 'src'), { recursive: true })
+    fs.mkdirSync(path.join(projectDir, 'target'), { recursive: true })
+    fs.mkdirSync(relocatedDir, { recursive: true })
+    fs.writeFileSync(path.join(relocatedDir, 'README.md'), '# 第二项目（已移动）\n\n重新定位验证目标。\n')
     fs.mkdirSync(secondDir, { recursive: true })
     fs.writeFileSync(
       path.join(projectDir, 'README.md'),
@@ -272,6 +277,11 @@ function runChild() {
       return
     }
 
+    // 无显示会话的环境里窗口不会被判定为「可见」，Chromium 会据此节流动画与计时器，
+    // 导致宽度过渡、样式重算停在中间状态，使样式断言随机失败。
+    // 这只影响本验证脚本的观测稳定性，不改变应用自身的节流策略。
+    window.webContents.setBackgroundThrottling(false)
+
     const loaded = await waitForLoad(window, 15000)
     record('渲染层加载完成', loaded, loaded ? 'did-finish-load' : '超时')
 
@@ -282,6 +292,13 @@ function runChild() {
       hasWorkbench: typeof window.workbench === 'object' && window.workbench !== null,
       projectList: typeof window.workbench?.project?.list,
       filePreview: typeof window.workbench?.file?.preview,
+      fileCreate: typeof window.workbench?.file?.create,
+      fileTransfer: typeof window.workbench?.file?.transfer,
+      fileRename: typeof window.workbench?.file?.rename,
+      fileDelete: typeof window.workbench?.file?.deleteToTrash,
+      projectRelocate: typeof window.workbench?.project?.relocate,
+      confirmQuit: typeof window.workbench?.app?.confirmQuit,
+      onQuitRequested: typeof window.workbench?.app?.onQuitRequested,
       terminalCreate: typeof window.workbench?.terminal?.create,
       systemOpenExternal: typeof window.workbench?.system?.openExternal,
       leakedRequire: typeof window.require,
@@ -295,9 +312,16 @@ function runChild() {
       '关键接口齐备',
       surface.projectList === 'function' &&
         surface.filePreview === 'function' &&
+        surface.fileCreate === 'function' &&
+        surface.fileTransfer === 'function' &&
+        surface.fileRename === 'function' &&
+        surface.fileDelete === 'function' &&
+        surface.projectRelocate === 'function' &&
+        surface.confirmQuit === 'function' &&
+        surface.onQuitRequested === 'function' &&
         surface.terminalCreate === 'function' &&
         surface.systemOpenExternal === 'function',
-      `project.list=${surface.projectList} file.preview=${surface.filePreview}`
+      `project.list=${surface.projectList} file.preview=${surface.filePreview} file.create=${surface.fileCreate} file.transfer=${surface.fileTransfer}`
     )
     record(
       '渲染进程无 Node 能力泄漏',
@@ -814,6 +838,99 @@ function runChild() {
     })()`)
     await waitFor(`document.querySelectorAll('.tree-row').length > 0`)
 
+    // M3 文件操作入口：通过真实界面点击，使用页面内替身响应原生 prompt/confirm。
+    const clickToolbarButton = async (text) =>
+      evaluate(`(() => {
+        const button = [...document.querySelectorAll('.browser-actions button')]
+          .find((item) => item.textContent.includes(${JSON.stringify(text)}))
+        if (!button || button.disabled) return false
+        button.click()
+        return true
+      })()`)
+    const clickTreeEntry = async (name) =>
+      evaluate(`(() => {
+        const label = [...document.querySelectorAll('.tree-label')]
+          .find((item) => item.querySelector('.name')?.textContent.trim() === ${JSON.stringify(name)})
+        if (!label) return false
+        label.click()
+        return true
+      })()`)
+    await evaluate(`(() => { window.prompt = () => 'ui-created.txt'; return true })()`)
+    const createClicked = await clickToolbarButton('新建文件')
+    const createdVisible = await waitFor(`document.querySelectorAll('.tree-label .name').length > 0 &&
+      [...document.querySelectorAll('.tree-label .name')].some((item) => item.textContent.trim() === 'ui-created.txt')`)
+    record(
+      '界面新建文件入口可用',
+      createClicked === true && createdVisible === true,
+      `点击=${String(createClicked)} 可见=${String(createdVisible)}`
+    )
+
+    await evaluate(`(() => { window.prompt = () => 'ui-renamed.txt'; return true })()`)
+    const renameClicked = await clickToolbarButton('重命名')
+    const renamedVisible = await waitFor(`([...document.querySelectorAll('.tree-label .name')]
+      .some((item) => item.textContent.trim() === 'ui-renamed.txt'))`)
+    record(
+      '界面重命名入口可用',
+      renameClicked === true && renamedVisible === true,
+      `点击=${String(renameClicked)} 可见=${String(renamedVisible)}`
+    )
+
+    const copySourceSelected = await clickTreeEntry('ui-renamed.txt')
+    const copyClicked = await clickToolbarButton('复制')
+    const targetSelectedForCopy = await clickTreeEntry('target')
+    const pasteCopyClicked = await clickToolbarButton('粘贴')
+    const copiedVisible = await waitFor(
+      `document.querySelectorAll('.tree-row[title*="target/ui-renamed.txt"]').length > 0`,
+      2500
+    )
+    record(
+      '界面复制粘贴入口可用',
+      copySourceSelected === true &&
+        copyClicked === true &&
+        targetSelectedForCopy === true &&
+        pasteCopyClicked === true &&
+        copiedVisible === true,
+      `选择源=${String(copySourceSelected)} 复制=${String(copyClicked)} 选择目标=${String(targetSelectedForCopy)} 粘贴=${String(pasteCopyClicked)}`
+    )
+
+    await evaluate(`(() => {
+      const root = [...document.querySelectorAll('.breadcrumb button')]
+        .find((item) => item.textContent.trim() === '项目根')
+      if (root) root.click()
+    })()`)
+    await sleep(250)
+    await evaluate(`(() => { window.prompt = () => 'ui-cut.txt'; return true })()`)
+    const createCutClicked = await clickToolbarButton('新建文件')
+    const cutCreated = await waitFor(`([...document.querySelectorAll('.tree-label .name')]
+      .some((item) => item.textContent.trim() === 'ui-cut.txt'))`)
+    const cutSourceSelected = await clickTreeEntry('ui-cut.txt')
+    const cutClicked = await clickToolbarButton('剪切')
+    const targetSelectedForCut = await clickTreeEntry('target')
+    const pasteCutClicked = await clickToolbarButton('粘贴')
+    const cutMoved = await waitFor(`document.querySelectorAll('.tree-row[title*="target/ui-cut.txt"]').length > 0`)
+    record(
+      '界面剪切粘贴入口可用',
+      createCutClicked === true &&
+        cutCreated === true &&
+        cutSourceSelected === true &&
+        cutClicked === true &&
+        targetSelectedForCut === true &&
+        pasteCutClicked === true &&
+        cutMoved === true,
+      `新建=${String(createCutClicked)} 剪切=${String(cutClicked)} 粘贴=${String(pasteCutClicked)}`
+    )
+
+    await evaluate(`(() => { window.confirm = () => true; return true })()`)
+    const deleteTargetSelected = await clickTreeEntry('ui-cut.txt')
+    const deleteClicked = await clickToolbarButton('删除')
+    const deleted = await waitFor(`!([...document.querySelectorAll('.tree-label .name')]
+      .some((item) => item.textContent.trim() === 'ui-cut.txt'))`)
+    record(
+      '界面删除入口可用且进入回收站流程',
+      deleteTargetSelected === true && deleteClicked === true && deleted === true,
+      `选择=${String(deleteTargetSelected)} 删除=${String(deleteClicked)} 已移除=${String(deleted)}`
+    )
+
     const beforeExpand = await evaluate(`document.querySelectorAll('.tree-row').length`)
     const expandable = await evaluate(`document.querySelectorAll('.tree-row .twisty:not(.placeholder)').length`)
     record('文件树提供可展开的目录', expandable > 0, `可展开目录数=${expandable}`)
@@ -853,7 +970,22 @@ function runChild() {
     const chevronRotated = await evaluate(`document.querySelectorAll('.tree-row .twisty.expanded').length`)
     record('展开态由箭头旋转体现', chevronRotated > 0, `旋转箭头数=${chevronRotated}`)
 
-    // 视觉基线：样式表未生效或类名漂移时这几项会失败
+    // 视觉基线：样式表未生效或类名漂移时这几项会失败。
+    //
+    // 先显式建立选中态再测量：此前的断言依赖「上一次点击留下的选中态」，
+    // 而文件操作后的异步刷新可能已把选中态清掉，导致该项随机失败。
+    // 用「项目根」清空选中 + Ctrl 点击选中一行（Ctrl 点击不展开／收起目录），
+    // 因此不会改变后续断言依赖的展开状态。
+    await evaluate(`(() => {
+      const root = [...document.querySelectorAll('.breadcrumb button')]
+        .find((item) => item.textContent.trim() === '项目根')
+      if (root) root.click()
+    })()`)
+    await evaluate(`(() => {
+      const label = document.querySelector('.tree-row .tree-label')
+      if (label) label.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }))
+    })()`)
+    const selectionReady = await waitFor(`document.querySelectorAll('.tree-row.selected').length > 0`, 3000)
     const visual = await evaluate(`(() => {
       const row = document.querySelector('.tree-row.selected')
       const glyph = document.querySelector('.tree-label .glyph')
@@ -872,8 +1004,10 @@ function runChild() {
     )
     record(
       '选中行使用系统蓝低透明度填充',
-      typeof visual.selectedBackground === 'string' && visual.selectedBackground.includes('0, 122, 255'),
-      String(visual.selectedBackground)
+      selectionReady === true &&
+        typeof visual.selectedBackground === 'string' &&
+        visual.selectedBackground.includes('0, 122, 255'),
+      `选中态=${String(selectionReady)} 背景=${String(visual.selectedBackground)}`
     )
     record('目录图标为内联 SVG', visual.glyphTag === 'svg', `glyph=${String(visual.glyphTag)}`)
     record(
@@ -908,10 +1042,13 @@ function runChild() {
     })()`)
     await sleep(300)
     const afterCollapseAll = await evaluate(`document.querySelectorAll('.tree-row').length`)
+    const rootRowCount = await evaluate(
+      `([...document.querySelectorAll('.tree-row')].filter((row) => row.style.paddingLeft === '4px').length)`
+    )
     record(
       '收起全部可恢复为根层视图',
-      collapseAllWorks === true && afterCollapseAll === beforeExpand,
-      `收起后 ${afterCollapseAll} 行（根层 ${beforeExpand} 行）`
+      collapseAllWorks === true && afterCollapseAll === rootRowCount,
+      `收起后 ${afterCollapseAll} 行（根层 ${rootRowCount} 行）`
     )
 
     // 拖拽分栏分隔线调整文件树宽度
@@ -1130,6 +1267,149 @@ function runChild() {
       untrackedDiff.chips.some((chip) => chip.includes('无 Git 基线')) && untrackedDiff.lines > 0,
       `${untrackedDiff.chips.join(' / ')} 行数=${untrackedDiff.lines}`
     )
+
+    /* ---------- M3-3 重新定位与信任重确认 ---------- */
+
+    // 回到项目库（重新定位入口在项目卡片上）
+    await evaluate(`(() => {
+      const back = document.querySelector('.project-header .back')
+      if (back) back.click()
+    })()`)
+    await waitFor(`document.querySelectorAll('.project-card').length > 0`)
+
+    const relocateButtonPresent = await evaluate(`(() => {
+      const card = [...document.querySelectorAll('.project-card')]
+        .find((item) => item.textContent.includes('第二项目'))
+      if (!card) return null
+      const button = [...card.querySelectorAll('button')].find((item) => item.textContent.includes('重新定位'))
+      return button === undefined ? null : { text: button.textContent.trim(), disabled: button.disabled }
+    })()`)
+    record(
+      '项目卡片提供重新定位入口',
+      relocateButtonPresent !== null && relocateButtonPresent.disabled === false,
+      relocateButtonPresent === null ? '未找到按钮' : `文案=${relocateButtonPresent.text}`
+    )
+
+    // 先给「第二项目」授予信任，才能验证「目录变化即撤销信任」而不是「本来就没信任」
+    const secondProjectId = await evaluate(`(async () => {
+      const list = await window.workbench.project.list()
+      const target = list.find((item) => item.displayName === '第二项目')
+      if (!target) return null
+      await window.workbench.project.update({ projectId: target.id, trusted: true })
+      return target.id
+    })()`)
+    await evaluate(`(() => {
+      const button = [...document.querySelectorAll('.library-actions button')].find((item) => item.textContent.trim() === '刷新')
+      if (button) button.click()
+    })()`)
+    const trustedBefore = await waitFor(
+      `([...document.querySelectorAll('.project-card')]
+      .some((card) => card.textContent.includes('第二项目') && card.textContent.includes('已信任')))`,
+      5000
+    )
+    record(
+      '重新定位前该项目处于已信任状态',
+      secondProjectId !== null && trustedBefore === true,
+      `id=${String(secondProjectId)} 已信任=${String(trustedBefore)}`
+    )
+
+    // 主进程的目录选择框用替身接管，避免原生对话框阻塞无人值守验证
+    const originalShowOpenDialog = electronModule.dialog.showOpenDialog
+    electronModule.dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [relocatedDir] })
+    try {
+      await evaluate(`(() => {
+        const card = [...document.querySelectorAll('.project-card')]
+          .find((item) => item.textContent.includes('第二项目'))
+        const button = card === null ? null : [...card.querySelectorAll('button')].find((item) => item.textContent.includes('重新定位'))
+        if (button) button.click()
+      })()`)
+      const relocated = await waitFor(
+        `([...document.querySelectorAll('.project-card')]
+          .some((card) => card.querySelector('.card-path')?.textContent.includes('second-project-moved')))`,
+        8000
+      )
+      const relocatedCard = await evaluate(`(() => {
+        const card = [...document.querySelectorAll('.project-card')]
+          .find((item) => item.textContent.includes('第二项目'))
+        if (!card) return null
+        return {
+          path: card.querySelector('.card-path')?.textContent ?? '',
+          badges: [...card.querySelectorAll('.chip')].map((chip) => chip.textContent),
+          notice: document.querySelector('.inline-notice')?.textContent ?? null
+        }
+      })()`)
+      record(
+        '重新定位后卡片指向新目录',
+        relocated === true && String(relocatedCard?.path).includes('second-project-moved'),
+        String(relocatedCard?.path)
+      )
+      record(
+        '重新定位后撤销信任并说明原因',
+        Array.isArray(relocatedCard?.badges) &&
+          relocatedCard.badges.includes('只读浏览') &&
+          String(relocatedCard?.notice).includes('重新确认'),
+        `徽章=${(relocatedCard?.badges ?? []).join(' / ')} 提示=${String(relocatedCard?.notice).slice(0, 40)}`
+      )
+      record(
+        '重新定位不移动磁盘内容',
+        fs.existsSync(path.join(secondDir, 'README.md')) && fs.existsSync(path.join(relocatedDir, 'README.md')),
+        '原目录与新目录的文件都仍在'
+      )
+    } finally {
+      electronModule.dialog.showOpenDialog = originalShowOpenDialog
+    }
+
+    /* ---------- M3-4 退出前活动会话提示 ---------- */
+
+    const liveSessions = await evaluate(`(() => {
+      const badges = [...document.querySelectorAll('.terminal-title .badge')].map((item) => item.textContent)
+      return badges.join(' / ')
+    })()`)
+    record('退出前仍有终端会话在运行', String(liveSessions).includes('会话运行中'), String(liveSessions))
+
+    // 触发真实退出：主进程应阻止并询问，而不是静默结束会话
+    electronModule.app.quit()
+    const quitPromptShown = await waitFor(`document.querySelectorAll('.modal-backdrop').length > 0`, 5000)
+    const quitModal = await evaluate(`(() => {
+      const modal = document.querySelector('.modal-backdrop .modal')
+      return {
+        text: modal?.textContent ?? '',
+        actions: [...document.querySelectorAll('.modal-backdrop .modal button')].map((item) => item.textContent.trim())
+      }
+    })()`)
+    record(
+      '退出前弹出活动会话确认',
+      quitPromptShown === true && String(quitModal.text).includes('终端会话'),
+      String(quitModal.text).slice(0, 48)
+    )
+    record(
+      '确认框提供取消与退出两个选项',
+      Array.isArray(quitModal.actions) &&
+        quitModal.actions.some((item) => item.includes('取消')) &&
+        quitModal.actions.some((item) => item.includes('退出')),
+      (quitModal.actions ?? []).join(' / ')
+    )
+
+    await evaluate(`(() => {
+      const button = [...document.querySelectorAll('.modal-backdrop .modal button')]
+        .find((item) => item.textContent.trim() === '取消')
+      if (button) button.click()
+    })()`)
+    await sleep(500)
+    const afterCancelQuit = await evaluate(`(() => ({
+      modals: document.querySelectorAll('.modal-backdrop').length,
+      stillMounted: document.querySelectorAll('.app').length
+    }))()`)
+    record(
+      '取消退出后应用继续运行',
+      afterCancelQuit.modals === 0 && afterCancelQuit.stillMounted === 1,
+      `弹层=${afterCancelQuit.modals} 应用挂载=${afterCancelQuit.stillMounted}`
+    )
+    const sessionsAfterCancel = await evaluate(`(() => {
+      const badges = [...document.querySelectorAll('.terminal-title .badge')].map((item) => item.textContent)
+      return badges.join(' / ')
+    })()`)
+    record('取消退出不结束终端会话', String(sessionsAfterCancel).includes('会话运行中'), String(sessionsAfterCancel))
 
     report()
   }
