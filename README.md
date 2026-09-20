@@ -87,31 +87,35 @@ M1／M2 的全部实现已于 2026-09-19 纳入版本历史，并完成一次实
 ├─ package.json            工程、依赖与验证入口
 ├─ biome.json              静态检查与格式化配置（Biome）
 ├─ electron.vite.config.ts 构建配置
+├─ electron-builder.yml    分发与打包配置
 ├─ tsconfig*.json          类型检查配置（主进程 / 渲染进程分离）
 ├─ src/
 │  ├─ main/                Electron 主进程（特权服务）
-│  │  ├─ index.ts          应用生命周期、窗口、进程级服务装配
+│  │  ├─ index.ts          应用生命周期、窗口、退出协调、进程级服务装配
 │  │  ├─ ipc/              按域拆分的 IPC 通道（guard / app / projects / files /
 │  │  │                    git / system / terminal）；来源校验在 guard.ts
 │  │  ├─ security/         路径解析与归属复核（path-guard）
 │  │  ├─ storage/          元数据原子写入与损坏容错（json-store）
 │  │  └─ modules/          project-registry / file-access / file-browser /
 │  │                       markdown-* / code-highlight / git-* / diff-service /
-│  │                       file-watcher / pty-session
+│  │                       file-watcher / pty-session / quit-coordinator
 │  ├─ preload/             白名单桥接层（不暴露原始 ipcRenderer）
 │  ├─ renderer/            React 界面
 │  │  ├─ pages/            项目库、项目首页
 │  │  ├─ components/       项目侧边栏、文件树、预览、差异、终端、尺寸手柄等
 │  │  └─ styles/           样式表按页面／组件拆分；styles.css 为 @import 入口
 │  └─ shared/              IPC 契约与数据对象类型
-├─ scripts/                验证脚本与 TS 加载钩子（不参与打包）
+├─ scripts/                验证脚本、打包辅助与 TS 加载钩子（不参与打包）
 ├─ docs/
 │  ├─ design/              产品与交互设计文档（Markdown 源 + 交付用 DOCX）
 │  ├─ research/            技术边界与官方来源核对记录
-│  └─ plan/                推进计划、里程碑与验证记录
+│  └─ plan/                项目概况、推进计划、里程碑与验证记录
 ├─ archive/                历史文档流水线产物（只读存档，不参与应用开发）
+├─ build/                  Electron 裁剪运行时（由 prepare-electron-dist 生成）
 ├─ output/                 文档流水线工作区（已被 .gitignore 忽略）
-└─ outputs/                交付物输出目录（已被 .gitignore 忽略）
+├─ outputs/                交付物输出目录（已被 .gitignore 忽略）
+├─ out/                    构建产物（已被 .gitignore 忽略）
+└─ release/                打包产物（已被 .gitignore 忽略）
 ```
 
 ---
@@ -120,6 +124,7 @@ M1／M2 的全部实现已于 2026-09-19 纳入版本历史，并完成一次实
 
 | 文档 | 内容 |
 |---|---|
+| [项目概况](docs/plan/项目概况.md) | **现状快照。** 交付状态、代码规模、架构分层、验证体系、安全边界、已知风险与下一步 |
 | [设计讨论稿 v0.4](docs/design/本地项目管理器-设计讨论稿-v0.4.md) | **当前基线。** 回写 M0–M2 的实施偏差：页面结构（侧边栏改为项目切换器）、新增交互与尺寸约定、视觉风格、D1 复核结论、验收场景状态 |
 | [设计讨论稿 v0.3](docs/design/本地项目管理器-设计讨论稿-v0.3.md) | 关闭全部五项决策门；含实现约束表与 10 项验收场景 |
 | [设计讨论稿 v0.2](docs/design/本地项目管理器-设计讨论稿-v0.2.md) | 关闭「普通目录可登记」决策（C08） |
@@ -355,8 +360,14 @@ npm run dev         # 开发模式（热更新）
 npm run build       # 构建生产版本到 out/
 npm run preview     # 预览构建结果
 npm run typecheck   # 主进程与渲染进程类型检查
-npm run verify:all  # 全部验证
+
+npm run verify:all           # 静态检查 + 类型检查 + 构建 + 全部验证套件 + 端到端
+npm run verify:m3-file-ops   # 文件操作与批量失败报告
+npm run verify:m3-lifecycle  # 重新定位与信任重确认、退出前会话提示
+npm run smoke:m1             # 端到端（真实 Electron，需先构建）
 ```
+
+各验证套件的完整清单见下文「验证」。
 
 ---
 

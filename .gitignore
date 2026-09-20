@@ -12,8 +12,14 @@ dist-electron/
 build/
 out/
 release/
+# 体积测量与打包试跑用的临时产物目录（`pack:dir -c.directories.output=release-check`）
+release-check/
 target/
 *.tsbuildinfo
+
+# ---- 构建期临时文件 ----
+# electron-vite 每次构建都会把配置编译成带时间戳的 .mjs 再执行，属于过程产物
+electron.vite.config.*.mjs
 
 # ---- 日志与临时文件 ----
 *.log
