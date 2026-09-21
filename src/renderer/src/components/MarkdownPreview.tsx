@@ -83,10 +83,10 @@ export function MarkdownPreview({
       loadAsset(image)
     }
 
-    // 已获项目授权的外部图片：本版策略默认关闭，出现时给出说明而不是静默空白
+    // 已获项目授权的外部图片：本版策略恒为关闭，出现时给出说明而不是静默空白
     for (const image of Array.from(host.querySelectorAll<HTMLImageElement>('img[data-remote]'))) {
       const url = image.getAttribute('data-remote') ?? ''
-      image.replaceWith(createPlaceholder(url, '网络图片默认不加载，可在项目设置中允许。'))
+      image.replaceWith(createPlaceholder(url, '网络图片不加载：本版未提供按项目允许的开关。'))
     }
 
     return () => {
