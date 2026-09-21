@@ -295,6 +295,86 @@ async function main(): Promise<void> {
     check('保护项未被删除', existsSync(join(projectDir, '.git', 'config')), '.git/config 仍在')
   }
 
+  /* ---------- 9. 受保护项的归一化写法（`.git` 绕过回归） ---------- */
+  {
+    resetFixture()
+    // `target/../.git` 的原始输入首段是 target，只有折叠 `..` 之后才暴露为 `.git`。
+    // 守卫必须在归一化后再查一次受保护项，否则「.git 元数据不提供写操作」失效。
+    const escapes = ['target/../.git', 'target/../.git/config', 'folder/../.git', 'target\\..\\.git']
+
+    const trashed: string[] = []
+    const deletion = await deleteEntries({
+      projectRoot: projectDir,
+      relativePaths: escapes,
+      trusted: true,
+      trash: async (absolutePath) => {
+        trashed.push(absolutePath)
+        await workingTrash(absolutePath)
+      }
+    })
+    check(
+      '经 .. 归一化到 .git 的删除一律未执行',
+      deletion.skipped === escapes.length && deletion.ok === 0 && deletion.failed === 0,
+      detail(deletion)
+    )
+    check(
+      '经 .. 归一化到 .git 逐项报为 protected-entry',
+      deletion.items.every((item) => item.reason === 'protected-entry'),
+      deletion.items.map((item) => `${item.relativePath}:${String(item.reason)}`).join(', ')
+    )
+    check('归一化写法未触达回收站', trashed.length === 0, trashed.join(', ') || '未调用回收站')
+    check('.git 元数据在归一化删除后仍完整', existsSync(join(projectDir, '.git', 'config')), '.git/config 仍在')
+
+    const copied = transferEntries({
+      projectRoot: projectDir,
+      relativePaths: ['target/../.git'],
+      targetDirectory: 'target',
+      mode: 'copy',
+      trusted: true
+    })
+    check(
+      '经 .. 归一化到 .git 拒绝复制',
+      copied.items[0]?.status === 'skipped' && copied.items[0]?.reason === 'protected-entry',
+      detail(copied)
+    )
+    check('复制未产生 .git 副本', !existsSync(join(targetDir, '.git')), 'target/.git 不存在')
+
+    const moved = transferEntries({
+      projectRoot: projectDir,
+      relativePaths: ['folder/../.git'],
+      targetDirectory: 'target',
+      mode: 'move',
+      trusted: true
+    })
+    check(
+      '经 .. 归一化到 .git 拒绝剪切粘贴',
+      moved.items[0]?.status === 'skipped' && moved.items[0]?.reason === 'protected-entry',
+      detail(moved)
+    )
+    check('剪切未移走 .git', existsSync(join(projectDir, '.git', 'config')), '.git/config 仍在')
+
+    const created = createEntry({
+      projectRoot: projectDir,
+      parentRelativePath: 'target/../.git',
+      name: 'hook.sh',
+      kind: 'file',
+      trusted: true
+    })
+    check('经 .. 归一化到 .git 拒绝新建', created.aborted && created.abortReason === 'protected-entry', detail(created))
+    check('未在 .git 内落盘', !existsSync(join(projectDir, '.git', 'hook.sh')), '.git/hook.sh 不存在')
+
+    // 反向对照：合法路径不得被误伤——`target/..` 归一化为项目根，仍应可作为粘贴目标
+    const viaRoot = transferEntries({
+      projectRoot: projectDir,
+      relativePaths: ['folder/nested.txt'],
+      targetDirectory: 'target/..',
+      mode: 'copy',
+      trusted: true
+    })
+    check('归一化到项目根的合法粘贴不受影响', viaRoot.ok === 1 && viaRoot.failed === 0, detail(viaRoot))
+    check('合法粘贴落到项目根', existsSync(join(projectDir, 'nested.txt')), 'nested.txt 已复制到项目根')
+  }
+
   console.log('=== M3 文件操作验证：新建、复制/剪切粘贴、删除与批量报告 ===')
   console.log(`样例目录：${fixtureRoot}`)
   console.log(`运行时：Node ${process.versions.node}　平台：${process.platform}\n`)

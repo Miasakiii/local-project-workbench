@@ -123,6 +123,13 @@ function main(): void {
     check('项目根不提供重命名', root.status === 'skipped' && root.reason === 'protected-entry', resultDetail(root))
     check('.git 元数据不提供重命名', git.status === 'skipped' && git.reason === 'protected-entry', resultDetail(git))
     check('不能重命名为 .git', toGit.status === 'skipped' && toGit.reason === 'protected-entry', resultDetail(toGit))
+    // 归一化绕过回归：原始输入首段不是 .git，折叠 `..` 之后才是
+    const escaped = runRename('folder/../.git/config', 'renamed-config')
+    check(
+      '经 .. 归一化到 .git 不提供重命名',
+      escaped.status === 'skipped' && escaped.reason === 'protected-entry',
+      resultDetail(escaped)
+    )
     check('受保护项未被修改', existsSync(join(projectDir, '.git', 'config')), 'Git 配置仍在')
   }
 

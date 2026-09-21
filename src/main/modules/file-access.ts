@@ -18,6 +18,7 @@ import type {
   FileOperationBatchResult,
   FileOperationItem,
   FileOperationReason,
+  FileOperationStatus,
   RenameEntryResult,
   TransferEntriesResult
 } from '@shared/types'
@@ -26,6 +27,7 @@ import {
   isProtectedEntry,
   isSameLocation,
   type PathRejection,
+  type ResolveOptions,
   resolveProjectPath
 } from '../security/path-guard'
 
@@ -79,26 +81,74 @@ function codeOf(error: unknown): string | null {
   return typeof code === 'string' ? code : null
 }
 
-/** 把 Node 的 errno 映射为面向用户的失败原因。 */
-export function classifyError(error: unknown): ClassifiedError {
-  const code = codeOf(error)
-  const raw = rawMessageOf(error)
+/**
+ * errno 的解释语境。
+ *
+ * 同一错误码在两类专业操作里含义不同：送入回收站失败时 `EEXIST`/`ENOTEMPTY` 指向
+ * 目标自身被占用（回收站无法安置它）；写入目标时它们指向「目标名称已被占用」。
+ * 因此映射按语境分列在同一张表里——历史上这两处曾各自维护而悄悄分歧。
+ */
+type ErrnoContext = 'trash' | 'write'
 
-  switch (code) {
-    case 'ENOENT':
-      return { reason: 'not-found', message: `目标不存在或已被移动，未执行删除：${raw}` }
-    case 'EACCES':
-    case 'EPERM':
-      return { reason: 'permission-denied', message: `没有权限完成该操作，源文件已保留：${raw}` }
-    case 'EBUSY':
-    case 'ENOTEMPTY':
-    case 'EEXIST':
-      return { reason: 'in-use', message: `目标被占用或目录非空，源文件已保留：${raw}` }
-    case 'EROFS':
-      return { reason: 'read-only', message: `目标位于只读位置，源文件已保留：${raw}` }
-    default:
-      return { reason: 'io-error', message: raw }
+const ERRNO_REASONS: Record<ErrnoContext, Record<string, FileOperationReason>> = {
+  trash: {
+    ENOENT: 'not-found',
+    EACCES: 'permission-denied',
+    EPERM: 'permission-denied',
+    EBUSY: 'in-use',
+    ENOTEMPTY: 'in-use',
+    EEXIST: 'in-use',
+    EROFS: 'read-only'
+  },
+  write: {
+    EEXIST: 'name-conflict',
+    ENOTEMPTY: 'name-conflict',
+    ENOENT: 'not-found',
+    EACCES: 'permission-denied',
+    EPERM: 'permission-denied',
+    EBUSY: 'in-use',
+    EROFS: 'read-only'
   }
+}
+
+/** 面向用户的说明。`action` 只在 write 语境参与措辞（「新建文件」「复制」等）。 */
+type ErrnoMessageBuilder = (action: string, raw: string) => string
+
+const ERRNO_MESSAGES: Record<ErrnoContext, Partial<Record<FileOperationReason, ErrnoMessageBuilder>>> = {
+  trash: {
+    'not-found': (_action, raw) => `目标不存在或已被移动，未执行删除：${raw}`,
+    'permission-denied': (_action, raw) => `没有权限完成该操作，源文件已保留：${raw}`,
+    'in-use': (_action, raw) => `目标被占用或目录非空，源文件已保留：${raw}`,
+    'read-only': (_action, raw) => `目标位于只读位置，源文件已保留：${raw}`,
+    'io-error': (_action, raw) => raw
+  },
+  write: {
+    'name-conflict': (_action, raw) => `目标名称已存在，未覆盖现有项：${raw}`,
+    'not-found': (action, raw) => `${action}所需的源项或目标父目录不存在，源项已保留：${raw}`,
+    'permission-denied': (action, raw) => `没有权限完成${action}，源项已保留：${raw}`,
+    'in-use': (action, raw) => `${action}所需的源项或目标目录被占用，源项已保留：${raw}`,
+    'read-only': (action, raw) => `${action}目标位于只读位置，源项已保留：${raw}`,
+    'io-error': (action, raw) => `${action}失败，源项已保留：${raw}`
+  }
+}
+
+/** 把 Node 的 errno 映射为面向用户的失败原因。 */
+function classifyErrno(error: unknown, context: ErrnoContext, action = ''): ClassifiedError {
+  const raw = rawMessageOf(error)
+  const code = codeOf(error)
+  const reason = (code !== null ? ERRNO_REASONS[context][code] : undefined) ?? 'io-error'
+  const build = ERRNO_MESSAGES[context][reason]
+  return { reason, message: build === undefined ? raw : build(action, raw) }
+}
+
+/** 回收站与目标状态检查语境的分类。 */
+export function classifyError(error: unknown): ClassifiedError {
+  return classifyErrno(error, 'trash')
+}
+
+/** 写目标语境的分类；`action` 用于「新建文件」「复制」等措辞。 */
+function classifyWriteError(error: unknown, action: string): ClassifiedError {
+  return classifyErrno(error, 'write', action)
 }
 
 /**
@@ -256,13 +306,6 @@ function normalizeEntryName(input: unknown): NormalizedEntryName | InvalidEntryN
   return { ok: true, normalized: shape.normalized }
 }
 
-function directoryForWrite(projectRoot: string, relativePath: string): ReturnType<typeof resolveProjectPath> {
-  return resolveProjectPath(projectRoot, relativePath.length > 0 ? relativePath : '.', {
-    mustExist: true,
-    expect: 'directory'
-  })
-}
-
 function childRelativePath(parent: string, name: string): string {
   return parent.length === 0 ? name : `${parent}/${name}`
 }
@@ -278,12 +321,153 @@ function isSameOrDescendant(parent: string, candidate: string): boolean {
 
 function operationItem(
   relativePath: string,
-  status: 'ok' | 'failed' | 'skipped',
+  status: FileOperationStatus,
   reason: FileOperationReason | null,
   message: string,
   targetRelativePath: string | null = null
 ): FileOperationItem {
   return { relativePath, targetRelativePath, status, reason, message }
+}
+
+/** 一个写目标被统一守卫拒绝后的表达。 */
+interface WriteRejection {
+  ok: false
+  /** 拒绝只会是「失败」或「未执行」，不会出现「成功」 */
+  status: Exclude<FileOperationStatus, 'ok'>
+  reason: FileOperationReason
+  message: string
+}
+
+interface WriteTargetOk {
+  ok: true
+  /** 已确认可用于写操作的真实路径 */
+  absolutePath: string
+  /** 折叠 `..` 与重复分隔符之后的项目内相对路径 */
+  relativePath: string
+}
+
+/** 写目标的解析结果：要么拿到可用于磁盘操作的真实路径，要么带着可直接上报的拒绝。 */
+type WriteTarget = WriteTargetOk | WriteRejection
+
+interface WriteGuardWording {
+  /** 路径链上有符号链接或目录联接 */
+  viaReparsePoint: string
+  /** 命中项目根或 `.git` 元数据 */
+  protectedEntry: (normalized: string) => string
+  /** 形态、归属或类型检查未通过 */
+  unresolvable: (
+    input: string,
+    rejection: FileRejection,
+    detail: string
+  ) => {
+    reason: FileOperationReason
+    message: string
+  }
+}
+
+interface WriteGuardOptions extends ResolveOptions {
+  /** 目录类目标允许就是项目根（新建的父目录、粘贴目标目录）；项级目标不允许 */
+  allowProjectRoot?: boolean
+  wording: WriteGuardWording
+}
+
+/** 受保护项按「未执行」报告，其余写拒绝按「失败」。 */
+function rejectProtected(message: string): WriteRejection {
+  return { ok: false, status: 'skipped', reason: 'protected-entry', message }
+}
+
+function rejectWrite(reason: FileOperationReason, message: string): WriteRejection {
+  return { ok: false, status: 'failed', reason, message }
+}
+
+/**
+ * 写操作目标解析——所有会改动磁盘的路径都只经此入口取得绝对路径。
+ *
+ * 判定顺序即安全边界，四步缺一不可：
+ * 1. 原始输入命中项目根或 `.git` → 拒绝；
+ * 2. 形态与归属检查（穿越、绝对路径、项目外、目录类型）；
+ * 3. 路径链上存在符号链接或目录联接 → 拒绝，写操作不经过链接；
+ * 4. **折叠 `..` 之后再查一次受保护项**。
+ *
+ * 第 4 步不是冗余：`sub/../.git` 的原始输入首段是 `sub`，只有第 4 步能看出它
+ * 归一化后就是 `.git`。缺这一步会让「`.git` 元数据不提供写操作」这条边界失效。
+ */
+function resolveForWrite(projectRoot: string, input: string, options: WriteGuardOptions): WriteTarget {
+  const allowProjectRoot = options.allowProjectRoot ?? false
+  const { wording } = options
+
+  const isProtected = (candidate: string): boolean =>
+    candidate.length > 0 ? isProtectedEntry(candidate) : !allowProjectRoot
+
+  if (isProtected(input)) {
+    return rejectProtected(wording.protectedEntry(input))
+  }
+
+  const resolution = resolveProjectPath(projectRoot, input, {
+    mustExist: options.mustExist,
+    expect: options.expect
+  })
+  if (!resolution.ok || resolution.absolutePath === null) {
+    const rejection = resolution.rejection ?? 'invalid-path'
+    const detail = wording.unresolvable(input, rejection, resolution.detail)
+    return rejectWrite(detail.reason, detail.message)
+  }
+  if (resolution.viaReparsePoint) {
+    return rejectWrite('invalid-path', wording.viaReparsePoint)
+  }
+  if (isProtected(resolution.normalized)) {
+    return rejectProtected(wording.protectedEntry(resolution.normalized))
+  }
+
+  return {
+    ok: true,
+    absolutePath: resolution.absolutePath,
+    relativePath: resolution.normalized
+  }
+}
+
+/** 目录类写目标（新建的父目录、粘贴目标目录）；空串表示项目根。 */
+function resolveDirectoryForWrite(projectRoot: string, relativePath: string, wording: WriteGuardWording): WriteTarget {
+  return resolveForWrite(projectRoot, relativePath.length > 0 ? relativePath : '.', {
+    mustExist: true,
+    expect: 'directory',
+    allowProjectRoot: true,
+    wording
+  })
+}
+
+/**
+ * 执行后复核：目标必须仍然存在、类型符合预期、真实路径与执行前一致，且路径链上
+ * 没有出现链接。`unstable` 供各入口补充自身条件（如「剪切后源项必须已消失」）。
+ *
+ * 只要这里返回 false，调用方就**不得报告成功**——系统调用返回不等于用户可确认的结果。
+ */
+function writtenTargetIntact(
+  projectRoot: string,
+  targetRelativePath: string,
+  expect: 'any' | 'file' | 'directory',
+  absolutePathBefore: string,
+  unstable?: () => boolean
+): boolean {
+  const targetAfter = resolveProjectPath(projectRoot, targetRelativePath, { mustExist: true, expect })
+  return !!(
+    targetAfter.ok &&
+    targetAfter.absolutePath !== null &&
+    !targetAfter.viaReparsePoint &&
+    isSameLocation(targetAfter.absolutePath, absolutePathBefore) &&
+    !unstable?.()
+  )
+}
+
+/** 删除入口的守卫文案。 */
+const DELETE_WORDING: WriteGuardWording = {
+  viaReparsePoint: '写操作不支持经过符号链接或目录联接的路径，未执行删除。',
+  protectedEntry: (normalized) =>
+    normalized.trim().length === 0 ? '项目根目录不允许删除。' : '项目根目录与 Git 元数据不提供删除操作。',
+  unresolvable: (input, rejection) => ({
+    reason: reasonForRejection(rejection),
+    message: messageForRejection(rejection, input)
+  })
 }
 
 /**
@@ -335,43 +519,19 @@ export async function deleteEntries(request: DeleteEntriesRequest): Promise<Dele
   for (let index = 0; index < uniquePaths.length; index += 1) {
     const relativePath = uniquePaths[index] as string
 
-    // 项目根与 .git 元数据不从普通文件操作入口提供破坏性操作
-    if (isProtectedEntry(relativePath)) {
-      items.push({
-        relativePath,
-        status: 'skipped',
-        reason: 'protected-entry',
-        message: relativePath.trim().length === 0 ? '项目根目录不允许删除。' : '项目根目录与 Git 元数据不提供删除操作。'
-      })
-      continue
-    }
-
-    const resolution = resolveProjectPath(request.projectRoot, relativePath, { mustExist: true })
-    if (!resolution.ok || resolution.absolutePath === null) {
-      const rejection = resolution.rejection ?? 'invalid-path'
-      items.push({
-        relativePath,
-        status: 'failed',
-        reason: reasonForRejection(rejection),
-        message: messageForRejection(rejection, relativePath)
-      })
-      continue
-    }
-
-    // 写操作不通过链接执行：否则「删除链接」可能被解析成「删除链接目标」。
-    if (resolution.viaReparsePoint) {
-      items.push({
-        relativePath,
-        status: 'failed',
-        reason: 'invalid-path',
-        message: '写操作不支持经过符号链接或目录联接的路径，未执行删除。'
-      })
+    // 项目根与 .git 元数据不提供删除；判定含归一化后的复查，见 resolveForWrite
+    const target = resolveForWrite(request.projectRoot, relativePath, {
+      mustExist: true,
+      wording: DELETE_WORDING
+    })
+    if (!target.ok) {
+      items.push(operationItem(relativePath, target.status, target.reason, target.message))
       continue
     }
 
     // 复核目标类型：目录联接本身也是目录，但仍按项处理
     try {
-      lstatSync(resolution.absolutePath)
+      lstatSync(target.absolutePath)
     } catch (error) {
       const classified = classifyError(error)
       items.push({
@@ -384,9 +544,9 @@ export async function deleteEntries(request: DeleteEntriesRequest): Promise<Dele
     }
 
     try {
-      await request.trash(resolution.absolutePath)
+      await request.trash(target.absolutePath)
     } catch (error) {
-      const decision = discriminateTrashFailure(resolution.absolutePath, error)
+      const decision = discriminateTrashFailure(target.absolutePath, error)
 
       if (decision.abort) {
         // 回收站不可用：停止整批操作，不降级为永久删除
@@ -424,7 +584,7 @@ export async function deleteEntries(request: DeleteEntriesRequest): Promise<Dele
     }
 
     // 磁盘确认：只有目标确实不存在了才报告成功（设计稿第 7 章）
-    if (existsSync(resolution.absolutePath)) {
+    if (existsSync(target.absolutePath)) {
       items.push({
         relativePath,
         status: 'failed',
@@ -435,7 +595,7 @@ export async function deleteEntries(request: DeleteEntriesRequest): Promise<Dele
     }
 
     items.push({
-      relativePath: resolution.normalized,
+      relativePath: target.relativePath,
       status: 'ok',
       reason: null,
       message: '已发送到系统回收站。'
@@ -455,6 +615,25 @@ export interface CreateEntryRequest {
   trusted: boolean
 }
 
+/** 新建入口的守卫文案：父目录与新建目标各一套。 */
+const CREATE_PARENT_WORDING: WriteGuardWording = {
+  viaReparsePoint: '写操作不支持经过符号链接或目录联接的目标目录，未执行新建。',
+  protectedEntry: () => 'Git 元数据目录不提供新建操作。',
+  unresolvable: (_input, _rejection, detail) => ({
+    reason: 'invalid-path',
+    message: `新建目标目录不可用：${detail}`
+  })
+}
+
+const CREATE_TARGET_WORDING: WriteGuardWording = {
+  viaReparsePoint: '写操作不支持经过符号链接或目录联接的目标路径，未执行新建。',
+  protectedEntry: () => '项目根目录与 Git 元数据不提供新建操作。',
+  unresolvable: (_input, _rejection, detail) => ({
+    reason: 'outside-project',
+    message: `目标路径不可用：${detail}`
+  })
+}
+
 /** 新建空文件或空文件夹；不覆盖已有目标。 */
 export function createEntry(request: CreateEntryRequest): CreateEntryResult {
   if (!request.trusted) {
@@ -466,45 +645,19 @@ export function createEntry(request: CreateEntryRequest): CreateEntryResult {
     return summarize([operationItem('', 'failed', 'invalid-path', name.message)])
   }
 
-  const parent = directoryForWrite(request.projectRoot, request.parentRelativePath)
-  if (!parent.ok || parent.absolutePath === null) {
-    return abortBatch('invalid-path', `新建目标目录不可用：${parent.detail}`)
-  }
-  if (parent.normalized.length > 0 && isProtectedEntry(parent.normalized)) {
-    return abortBatch('protected-entry', 'Git 元数据目录不提供新建操作。')
-  }
-  if (parent.viaReparsePoint) {
-    return abortBatch('invalid-path', '写操作不支持经过符号链接或目录联接的目标目录，未执行新建。')
+  const parent = resolveDirectoryForWrite(request.projectRoot, request.parentRelativePath, CREATE_PARENT_WORDING)
+  if (!parent.ok) {
+    return abortBatch(parent.reason, parent.message)
   }
 
-  const targetRelativePath = childRelativePath(parent.normalized, name.normalized)
-  if (isProtectedEntry(targetRelativePath)) {
+  const targetRelativePath = childRelativePath(parent.relativePath, name.normalized)
+  const target = resolveForWrite(request.projectRoot, targetRelativePath, {
+    mustExist: false,
+    wording: CREATE_TARGET_WORDING
+  })
+  if (!target.ok) {
     return summarize([
-      operationItem(
-        targetRelativePath,
-        'skipped',
-        'protected-entry',
-        '项目根目录与 Git 元数据不提供新建操作。',
-        targetRelativePath
-      )
-    ])
-  }
-
-  const target = resolveProjectPath(request.projectRoot, targetRelativePath, { mustExist: false })
-  if (!target.ok || target.absolutePath === null) {
-    return summarize([
-      operationItem(targetRelativePath, 'failed', 'outside-project', `目标路径不可用：${target.detail}`)
-    ])
-  }
-  if (target.viaReparsePoint) {
-    return summarize([
-      operationItem(
-        targetRelativePath,
-        'failed',
-        'invalid-path',
-        '写操作不支持经过符号链接或目录联接的目标路径，未执行新建。',
-        targetRelativePath
-      )
+      operationItem(targetRelativePath, target.status, target.reason, target.message, targetRelativePath)
     ])
   }
   if (!isSameLocation(dirname(target.absolutePath), parent.absolutePath)) {
@@ -533,16 +686,7 @@ export function createEntry(request: CreateEntryRequest): CreateEntryResult {
     ])
   }
 
-  const targetAfter = resolveProjectPath(request.projectRoot, targetRelativePath, {
-    mustExist: true,
-    expect: request.kind
-  })
-  if (
-    !targetAfter.ok ||
-    targetAfter.absolutePath === null ||
-    targetAfter.viaReparsePoint ||
-    !isSameLocation(targetAfter.absolutePath, target.absolutePath)
-  ) {
+  if (!writtenTargetIntact(request.projectRoot, targetRelativePath, request.kind, target.absolutePath)) {
     return summarize([
       operationItem(
         targetRelativePath,
@@ -575,6 +719,34 @@ export interface TransferEntriesRequest {
   trusted: boolean
 }
 
+/** 复制／剪切入口的守卫文案：粘贴目录、源项、落地目标各一套。 */
+const PASTE_DIRECTORY_WORDING: WriteGuardWording = {
+  viaReparsePoint: '写操作不支持经过符号链接或目录联接的粘贴目标目录。',
+  protectedEntry: () => 'Git 元数据目录不提供复制或剪切粘贴目标。',
+  unresolvable: (_input, _rejection, detail) => ({
+    reason: 'invalid-path',
+    message: `粘贴目标目录不可用：${detail}`
+  })
+}
+
+const TRANSFER_SOURCE_WORDING: WriteGuardWording = {
+  viaReparsePoint: '写操作不支持经过符号链接或目录联接的源项。',
+  protectedEntry: () => '项目根目录与 Git 元数据不提供复制或移动。',
+  unresolvable: (_input, rejection, detail) => ({
+    reason: reasonForRejection(rejection),
+    message: `源项无法处理：${detail}`
+  })
+}
+
+const TRANSFER_TARGET_WORDING: WriteGuardWording = {
+  viaReparsePoint: '目标名称已指向符号链接或目录联接，未执行以避免误操作。',
+  protectedEntry: () => '项目根目录与 Git 元数据不提供复制或移动。',
+  unresolvable: (_input, _rejection, detail) => ({
+    reason: 'outside-project',
+    message: `目标路径不可用：${detail}`
+  })
+}
+
 /**
  * 在同一项目内复制或移动一批文件/文件夹。
  *
@@ -595,45 +767,36 @@ export function transferEntries(request: TransferEntriesRequest): TransferEntrie
     )
   }
 
-  const targetDirectory = directoryForWrite(request.projectRoot, request.targetDirectory)
-  if (!targetDirectory.ok || targetDirectory.absolutePath === null) {
-    return abortBatch('invalid-path', `粘贴目标目录不可用：${targetDirectory.detail}`)
-  }
-  if (targetDirectory.normalized.length > 0 && isProtectedEntry(targetDirectory.normalized)) {
-    return abortBatch('protected-entry', 'Git 元数据目录不提供复制或剪切粘贴目标。')
-  }
-  if (targetDirectory.viaReparsePoint) {
-    return abortBatch('invalid-path', '写操作不支持经过符号链接或目录联接的粘贴目标目录。')
+  const targetDirectory = resolveDirectoryForWrite(
+    request.projectRoot,
+    request.targetDirectory,
+    PASTE_DIRECTORY_WORDING
+  )
+  if (!targetDirectory.ok) {
+    return abortBatch(targetDirectory.reason, targetDirectory.message)
   }
 
   const items: FileOperationItem[] = []
 
   for (const inputPath of uniquePaths) {
-    if (isProtectedEntry(inputPath)) {
-      items.push(operationItem(inputPath, 'skipped', 'protected-entry', '项目根目录与 Git 元数据不提供复制或移动。'))
-      continue
-    }
-
-    const source = resolveProjectPath(request.projectRoot, inputPath, { mustExist: true })
-    if (!source.ok || source.absolutePath === null) {
-      const rejection = source.rejection ?? 'invalid-path'
-      items.push(operationItem(inputPath, 'failed', reasonForRejection(rejection), `源项无法处理：${source.detail}`))
-      continue
-    }
-    if (source.viaReparsePoint) {
-      items.push(operationItem(inputPath, 'failed', 'invalid-path', '写操作不支持经过符号链接或目录联接的源项。'))
+    const source = resolveForWrite(request.projectRoot, inputPath, {
+      mustExist: true,
+      wording: TRANSFER_SOURCE_WORDING
+    })
+    if (!source.ok) {
+      items.push(operationItem(inputPath, source.status, source.reason, source.message))
       continue
     }
 
     const hasSelectedAncestor = uniquePaths.some((otherInput) => {
       if (otherInput === inputPath) return false
       const otherShape = checkRelativeShape(otherInput)
-      return otherShape.ok && isSameOrDescendant(otherShape.normalized, source.normalized)
+      return otherShape.ok && isSameOrDescendant(otherShape.normalized, source.relativePath)
     })
     if (hasSelectedAncestor) {
       items.push(
         operationItem(
-          source.normalized,
+          source.relativePath,
           'skipped',
           'invalid-path',
           '该项已包含在另一个选中目录内，本批次跳过以避免重复复制或移动。'
@@ -647,49 +810,32 @@ export function transferEntries(request: TransferEntriesRequest): TransferEntrie
       sourceIsDirectory = lstatSync(source.absolutePath).isDirectory()
     } catch (error) {
       const classified = classifyWriteError(error, request.mode === 'copy' ? '复制' : '移动')
-      items.push(operationItem(source.normalized, 'failed', classified.reason, classified.message))
+      items.push(operationItem(source.relativePath, 'failed', classified.reason, classified.message))
       continue
     }
 
     if (sourceIsDirectory) {
-      if (isSameOrDescendant(source.normalized, targetDirectory.normalized)) {
+      if (isSameOrDescendant(source.relativePath, targetDirectory.relativePath)) {
         items.push(
-          operationItem(source.normalized, 'failed', 'invalid-path', '不能把文件夹复制或移动到自身或其子目录内。')
+          operationItem(source.relativePath, 'failed', 'invalid-path', '不能把文件夹复制或移动到自身或其子目录内。')
         )
         continue
       }
     }
 
-    const targetRelativePath = childRelativePath(targetDirectory.normalized, leafOf(source.normalized))
-    const target = resolveProjectPath(request.projectRoot, targetRelativePath, { mustExist: false })
-    if (!target.ok || target.absolutePath === null) {
-      items.push(
-        operationItem(
-          source.normalized,
-          'failed',
-          'outside-project',
-          `目标路径不可用：${target.detail}`,
-          targetRelativePath
-        )
-      )
-      continue
-    }
-    if (target.viaReparsePoint) {
-      items.push(
-        operationItem(
-          source.normalized,
-          'failed',
-          'invalid-path',
-          '目标名称已指向符号链接或目录联接，未执行以避免误操作。',
-          targetRelativePath
-        )
-      )
+    const targetRelativePath = childRelativePath(targetDirectory.relativePath, leafOf(source.relativePath))
+    const target = resolveForWrite(request.projectRoot, targetRelativePath, {
+      mustExist: false,
+      wording: TRANSFER_TARGET_WORDING
+    })
+    if (!target.ok) {
+      items.push(operationItem(source.relativePath, target.status, target.reason, target.message, targetRelativePath))
       continue
     }
     if (existsSync(target.absolutePath)) {
       items.push(
         operationItem(
-          source.normalized,
+          source.relativePath,
           'failed',
           'name-conflict',
           `目标名称已存在，未覆盖现有项：${targetRelativePath}`,
@@ -701,7 +847,7 @@ export function transferEntries(request: TransferEntriesRequest): TransferEntrie
     if (!isSameLocation(dirname(target.absolutePath), targetDirectory.absolutePath)) {
       items.push(
         operationItem(
-          source.normalized,
+          source.relativePath,
           'failed',
           'path-changed',
           '粘贴目标目录在执行前发生变化，未执行该项。',
@@ -719,26 +865,27 @@ export function transferEntries(request: TransferEntriesRequest): TransferEntrie
       }
     } catch (error) {
       const classified = classifyWriteError(error, request.mode === 'copy' ? '复制' : '移动')
-      items.push(operationItem(source.normalized, 'failed', classified.reason, classified.message, targetRelativePath))
+      items.push(
+        operationItem(source.relativePath, 'failed', classified.reason, classified.message, targetRelativePath)
+      )
       continue
     }
 
-    const targetAfter = resolveProjectPath(request.projectRoot, targetRelativePath, {
-      mustExist: true,
-      expect: sourceIsDirectory ? 'directory' : 'file'
-    })
+    // 剪切要求源项已消失，复制要求源项仍在；任一不符都不报告成功
     const sourceStillExists = existsSync(source.absolutePath)
     const sourceStateOkay = request.mode === 'copy' ? sourceStillExists : !sourceStillExists
     if (
-      !targetAfter.ok ||
-      targetAfter.absolutePath === null ||
-      targetAfter.viaReparsePoint ||
-      !isSameLocation(targetAfter.absolutePath, target.absolutePath) ||
-      !sourceStateOkay
+      !writtenTargetIntact(
+        request.projectRoot,
+        targetRelativePath,
+        sourceIsDirectory ? 'directory' : 'file',
+        target.absolutePath,
+        () => !sourceStateOkay
+      )
     ) {
       items.push(
         operationItem(
-          source.normalized,
+          source.relativePath,
           'failed',
           'path-changed',
           '操作调用已返回，但源项或目标项状态无法安全确认；请刷新文件树后再继续。',
@@ -750,7 +897,7 @@ export function transferEntries(request: TransferEntriesRequest): TransferEntrie
 
     items.push(
       operationItem(
-        source.normalized,
+        source.relativePath,
         'ok',
         null,
         request.mode === 'copy' ? '已复制到目标目录。' : '已移动到目标目录。',
@@ -778,27 +925,6 @@ function normalizeRenameName(input: unknown): NormalizedEntryName | InvalidEntry
   return result
 }
 
-function classifyWriteError(error: unknown, action: string): { reason: FileOperationReason; message: string } {
-  const code = codeOf(error)
-  const raw = rawMessageOf(error)
-  switch (code) {
-    case 'EEXIST':
-    case 'ENOTEMPTY':
-      return { reason: 'name-conflict', message: `目标名称已存在，未覆盖现有项：${raw}` }
-    case 'ENOENT':
-      return { reason: 'not-found', message: `${action}所需的源项或目标父目录不存在，源项已保留：${raw}` }
-    case 'EACCES':
-    case 'EPERM':
-      return { reason: 'permission-denied', message: `没有权限完成${action}，源项已保留：${raw}` }
-    case 'EBUSY':
-      return { reason: 'in-use', message: `${action}所需的源项或目标目录被占用，源项已保留：${raw}` }
-    case 'EROFS':
-      return { reason: 'read-only', message: `${action}目标位于只读位置，源项已保留：${raw}` }
-    default:
-      return { reason: 'io-error', message: `${action}失败，源项已保留：${raw}` }
-  }
-}
-
 function renameFailure(
   relativePath: string,
   targetRelativePath: string | null,
@@ -807,6 +933,25 @@ function renameFailure(
   status: 'failed' | 'skipped' = 'failed'
 ): RenameEntryResult {
   return { relativePath, targetRelativePath, status, reason, message }
+}
+
+/** 重命名入口的守卫文案：源项与目标名各一套。 */
+const RENAME_SOURCE_WORDING: WriteGuardWording = {
+  viaReparsePoint: '写操作不支持经过符号链接或目录联接的路径，未执行重命名。',
+  protectedEntry: () => '项目根目录与 Git 元数据不提供重命名。',
+  unresolvable: (_input, rejection, detail) => ({
+    reason: reasonForRejection(rejection),
+    message: `源项无法用于重命名：${detail}`
+  })
+}
+
+const RENAME_TARGET_WORDING: WriteGuardWording = {
+  viaReparsePoint: '写操作不支持经过符号链接或目录联接的路径，未执行重命名。',
+  protectedEntry: () => '不能把文件或文件夹重命名为项目根目录或 Git 元数据。',
+  unresolvable: (_input, _rejection, detail) => ({
+    reason: 'outside-project',
+    message: `目标路径无法用于重命名：${detail}`
+  })
 }
 
 /**
@@ -833,48 +978,25 @@ export function renameEntry(request: RenameEntryRequest): RenameEntryResult {
   const name = normalizeRenameName(request.newName)
   if (!name.ok) return renameFailure(sourceInput, null, 'invalid-path', name.message)
 
-  if (isProtectedEntry(sourceInput)) {
-    return renameFailure(sourceInput, null, 'protected-entry', '项目根目录与 Git 元数据不提供重命名。', 'skipped')
+  const source = resolveForWrite(request.projectRoot, sourceInput, {
+    mustExist: true,
+    wording: RENAME_SOURCE_WORDING
+  })
+  if (!source.ok) {
+    return renameFailure(sourceInput, null, source.reason, source.message, source.status)
   }
 
-  const source = resolveProjectPath(request.projectRoot, sourceInput, { mustExist: true })
-  if (!source.ok || source.absolutePath === null) {
-    const rejection = source.rejection ?? 'io-error'
-    return renameFailure(sourceInput, null, reasonForRejection(rejection), `源项无法用于重命名：${source.detail}`)
-  }
-
-  const sourceRelative = source.normalized
-  if (isProtectedEntry(sourceRelative)) {
-    return renameFailure(sourceInput, null, 'protected-entry', '项目根目录与 Git 元数据不提供重命名。', 'skipped')
-  }
-
+  const sourceRelative = source.relativePath
   const separator = sourceRelative.lastIndexOf('/')
   const parentRelative = separator < 0 ? '' : sourceRelative.slice(0, separator)
   const targetRelative = parentRelative.length === 0 ? name.normalized : `${parentRelative}/${name.normalized}`
 
-  if (isProtectedEntry(targetRelative)) {
-    return renameFailure(
-      sourceInput,
-      targetRelative,
-      'protected-entry',
-      '不能把文件或文件夹重命名为项目根目录或 Git 元数据。',
-      'skipped'
-    )
-  }
-
-  const target = resolveProjectPath(request.projectRoot, targetRelative, { mustExist: false })
-  if (!target.ok || target.absolutePath === null) {
-    return renameFailure(sourceInput, targetRelative, 'outside-project', `目标路径无法用于重命名：${target.detail}`)
-  }
-
-  // 对写操作收紧策略：链接可以浏览，但不通过链接执行重命名。
-  if (source.viaReparsePoint || target.viaReparsePoint) {
-    return renameFailure(
-      sourceInput,
-      targetRelative,
-      'invalid-path',
-      '写操作不支持经过符号链接或目录联接的路径，未执行重命名。'
-    )
+  const target = resolveForWrite(request.projectRoot, targetRelative, {
+    mustExist: false,
+    wording: RENAME_TARGET_WORDING
+  })
+  if (!target.ok) {
+    return renameFailure(sourceInput, targetRelative, target.reason, target.message, target.status)
   }
 
   try {
@@ -920,13 +1042,10 @@ export function renameEntry(request: RenameEntryRequest): RenameEntryResult {
   }
 
   // 执行后复核：不能把「系统调用返回」直接等同于「用户可确认的成功」。
-  const targetAfter = resolveProjectPath(request.projectRoot, targetRelative, { mustExist: true })
   if (
-    existsSync(source.absolutePath) ||
-    !targetAfter.ok ||
-    targetAfter.absolutePath === null ||
-    targetAfter.viaReparsePoint ||
-    !isSameLocation(targetAfter.absolutePath, target.absolutePath)
+    !writtenTargetIntact(request.projectRoot, targetRelative, 'any', target.absolutePath, () =>
+      existsSync(source.absolutePath)
+    )
   ) {
     return renameFailure(
       sourceInput,
