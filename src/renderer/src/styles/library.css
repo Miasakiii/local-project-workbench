@@ -32,6 +32,23 @@
   align-items: center;
 }
 
+/* 应用级偏好开关：与按钮同排，但视觉权重低于动作按钮 */
+.pref-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.pref-toggle input[type='checkbox'] {
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .project-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));

@@ -27,6 +27,8 @@ import type {
   QuitRequestedEvent,
   RegisterProjectResult,
   RenameEntryResult,
+  SettingsResult,
+  StartupViewResult,
   TerminalCreateRequest,
   TerminalCreateResult,
   TerminalDataEvent,
@@ -34,6 +36,7 @@ import type {
   TerminalResizeRequest,
   TerminalWriteRequest,
   TransferEntriesResult,
+  UpdateSettingsRequest,
   ViewStateRequest,
   ViewStateSaveRequest,
   WatcherSetActiveRequest
@@ -59,6 +62,12 @@ const api = {
     selectDirectory: (): Promise<string | null> => ipcRenderer.invoke(IpcChannel.dialogSelectDirectory),
 
     /**
+     * 启动位置：主进程判定本次启动是否直接进入上次项目（C09）。
+     * 渲染进程只接受结论——要打开哪个项目、以及为什么没恢复，不参与判定本身。
+     */
+    startupView: (): Promise<StartupViewResult> => ipcRenderer.invoke(IpcChannel.appStartupView),
+
+    /**
      * 回应「退出前存在活动会话」的询问。
      * confirmed 为 false 时取消本次退出，应用继续运行。
      */
@@ -72,6 +81,12 @@ const api = {
         ipcRenderer.removeListener(IpcChannel.appQuitRequested, handler)
       }
     }
+  },
+
+  settings: {
+    /** 只开放界面能表达的那一项偏好；返回主进程实际持久化的值 */
+    update: (request: UpdateSettingsRequest): Promise<SettingsResult> =>
+      ipcRenderer.invoke(IpcChannel.settingsUpdate, request)
   },
 
   project: {

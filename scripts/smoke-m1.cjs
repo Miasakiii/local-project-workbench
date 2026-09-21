@@ -7,10 +7,15 @@
  *   2. 预加载层白名单成立：存在 workbench API，且不存在 require／process／ipcRenderer
  *   3. 项目列表、文件列表、Markdown 预览、Git 快照、终端创建经 IPC 端到端可用
  *   4. 页面导航被阻止（外链不改变当前地址）
+ *   5. 界面交互：文件操作、重新定位、退出前会话提示
+ *   6. 启动位置（C09／验收场景 10）：分三个阶段，各自是**一次真实进程启动**——
+ *      main（开关关闭 → 停留项目库，并在结束时开启开关、打开一个项目）、
+ *      restore（重启 → 直接进入上次项目；移除登记后重载 → 说明原因；随后关闭开关）、
+ *      restore-off（重启 → 回到项目库）。跨阶段的只有应用数据目录里的 settings.json。
  *
  * 用法：
- *   node scripts/smoke-m1.cjs          # 父进程模式（推荐，会清理 ELECTRON_RUN_AS_NODE）
- *   electron scripts/smoke-m1.cjs      # 直接运行子进程模式
+ *   node scripts/smoke-m1.cjs          # 父进程模式（推荐，会清理 ELECTRON_RUN_AS_NODE 并按阶段派生）
+ *   electron scripts/smoke-m1.cjs      # 直接运行子进程模式（WORKBENCH_SMOKE_PHASE 选择阶段）
  */
 
 const path = require('node:path')
@@ -132,6 +137,22 @@ function runChild() {
 
   const results = []
   const record = (name, pass, detail) => results.push({ name, pass, detail })
+
+  /**
+   * 本轮验证的阶段。三个阶段串起来才是验收场景 10 的完整表述：
+   * 首次启动停留项目库（main）→ 开启后**重启**直接进入上次项目（restore）
+   * → 关闭后**重启**回到项目库（restore-off）。
+   * 「重启」由父进程分别派生真实进程实现，偏好与上次项目通过应用数据目录跨进程传递。
+   */
+  const phase = process.env.WORKBENCH_SMOKE_PHASE || 'main'
+  const settingsFile = () => path.join(app.getPath('userData'), 'settings.json')
+  const readSettings = () => {
+    try {
+      return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')).data
+    } catch {
+      return null
+    }
+  }
 
   const fixtureRoot = path.join(os.tmpdir(), 'workbench-smoke-m1')
   const projectDir = path.join(fixtureRoot, 'project')
@@ -262,6 +283,117 @@ function runChild() {
     })
   }
 
+  /** 重新加载渲染层：等同于关掉窗口再打开应用——主进程与磁盘上的偏好都保持原样 */
+  function reloadWindow(window, settleMs = 700) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 15000)
+      window.webContents.once('did-finish-load', () => {
+        clearTimeout(timer)
+        setTimeout(() => resolve(true), settleMs)
+      })
+      window.webContents.reload()
+    })
+  }
+
+  /**
+   * restore / restore-off 阶段：只验证启动位置（C09，验收场景 10）。
+   * 应用已作为**新进程**启动，因此「直接进入上次项目」不依赖任何点击。
+   */
+  async function runStartupPhase(window) {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const evaluate = (source) => window.webContents.executeJavaScript(source)
+    const waitFor = async (source, timeoutMs = 8000) => {
+      const started = Date.now()
+      while (Date.now() - started < timeoutMs) {
+        if (await evaluate(source)) return true
+        await sleep(150)
+      }
+      return false
+    }
+    const onLibrary = `document.querySelectorAll('.library-page').length > 0`
+    const noticeText = `document.querySelector('.inline-notice.banner')?.textContent ?? null`
+
+    if (phase === 'restore') {
+      const carried = readSettings()
+      record(
+        '上一轮运行留下的开关状态为开启',
+        carried !== null && carried.restoreLastProject === true,
+        `settings.json=${JSON.stringify(carried)}`
+      )
+
+      const landedDirectly = await waitFor(
+        `(() => {
+          const slot = document.querySelector('.project-slot:not(.hidden)')
+          return slot?.querySelector('h1')?.textContent === '第二项目'
+        })()`
+      )
+      record('开启开关后重启直接进入上次项目', landedDirectly === true, landedDirectly ? '已进入第二项目' : '未进入')
+      record(
+        '恢复成功时不显示说明条',
+        (await evaluate(`document.querySelectorAll('.inline-notice.banner').length`)) === 0,
+        `说明条数=${String(await evaluate(`document.querySelectorAll('.inline-notice.banner').length`))}`
+      )
+
+      // 恢复不了的两种情形：上次项目已从登记移除 → 停留项目库并说明原因
+      await evaluate(`(async () => {
+        const list = await window.workbench.project.list()
+        const target = list.find((item) => item.displayName === '第二项目')
+        if (!target) return null
+        return await window.workbench.project.remove({ projectId: target.id })
+      })()`)
+      await sleep(400)
+      await reloadWindow(window)
+      const backOnLibrary = await waitFor(onLibrary)
+      const removalNotice = await evaluate(noticeText)
+      record(
+        '上次项目已移除登记时停留项目库并说明',
+        backOnLibrary === true && String(removalNotice).includes('不在登记列表'),
+        String(removalNotice).slice(0, 48)
+      )
+      record(
+        '移除登记后仍记录着上次项目（开关未动）',
+        readSettings()?.restoreLastProject === true && String(readSettings()?.lastProjectId).length > 0,
+        `settings.json=${JSON.stringify(readSettings())}`
+      )
+
+      // 关掉开关，并把关闭状态留给下一次真实启动
+      const toggled = await evaluate(`(() => {
+        const input = document.querySelector('.pref-toggle input[type="checkbox"]')
+        if (!input) return 'missing'
+        if (input.checked) input.click()
+        return 'off'
+      })()`)
+      await sleep(500)
+      const afterDisable = readSettings()
+      record(
+        '关闭开关后持久化为关闭',
+        toggled === 'off' && afterDisable !== null && afterDisable.restoreLastProject === false,
+        `界面=${String(toggled)} settings.json=${JSON.stringify(afterDisable)}`
+      )
+      return
+    }
+
+    // restore-off：开关已关闭，重启应回到项目库且不产生任何说明
+    const carried = readSettings()
+    record(
+      '上一轮运行已把开关留在关闭状态',
+      carried !== null && carried.restoreLastProject === false,
+      JSON.stringify(carried)
+    )
+    const stayedOnLibrary = await waitFor(onLibrary)
+    const mountedProjects = await evaluate(`document.querySelectorAll('.project-slot').length`)
+    record(
+      '关闭开关后重启回到项目库',
+      stayedOnLibrary === true && mountedProjects === 0,
+      `项目库=${String(stayedOnLibrary)} 已挂载项目页=${String(mountedProjects)}`
+    )
+    record(
+      '默认停留项目库时不显示恢复说明',
+      (await evaluate(noticeText)) === null,
+      `说明条=${String(await evaluate(noticeText))}`
+    )
+  }
+
   async function main() {
     buildFixture()
     seedRegistry()
@@ -287,6 +419,12 @@ function runChild() {
 
     // 等待预加载层注入
     await new Promise((resolve) => setTimeout(resolve, 600))
+
+    if (phase !== 'main') {
+      await runStartupPhase(window)
+      report()
+      return
+    }
 
     const surface = await window.webContents.executeJavaScript(`(() => ({
       hasWorkbench: typeof window.workbench === 'object' && window.workbench !== null,
@@ -331,6 +469,25 @@ function runChild() {
       `require=${surface.leakedRequire} process=${surface.leakedProcess} ipcRenderer=${surface.leakedIpc}`
     )
     record('界面已挂载', surface.domReady > 0, `.app 节点数=${surface.domReady}`)
+
+    // C09 的默认行为：开关未开启时启动停留在项目库（尚无任何点击）
+    const bootView = await window.webContents.executeJavaScript(`(() => ({
+      library: document.querySelectorAll('.library-page').length,
+      projects: document.querySelectorAll('.project-slot').length,
+      notice: document.querySelectorAll('.inline-notice.banner').length,
+      toggle: document.querySelectorAll('.pref-toggle input[type="checkbox"]').length,
+      checked: document.querySelector('.pref-toggle input[type="checkbox"]')?.checked ?? null
+    }))()`)
+    record(
+      '首次启动停留项目库且不显示恢复说明',
+      bootView.library === 1 && bootView.projects === 0 && bootView.notice === 0,
+      `项目库=${bootView.library} 项目页=${bootView.projects} 说明条=${bootView.notice}`
+    )
+    record(
+      '项目库提供「启动时恢复上次项目」开关且默认关闭',
+      bootView.toggle === 1 && bootView.checked === false,
+      `开关数=${bootView.toggle} 勾选=${String(bootView.checked)}`
+    )
 
     // 端到端 IPC：项目列表
     const projects = await window.webContents.executeJavaScript('window.workbench.project.list()')
@@ -1411,11 +1568,55 @@ function runChild() {
     })()`)
     record('取消退出不结束终端会话', String(sessionsAfterCancel).includes('会话运行中'), String(sessionsAfterCancel))
 
+    /* ---------- C09 场景 10：开启开关并记下上次项目 ---------- */
+
+    const enableClicked = await evaluate(`(() => {
+      const input = document.querySelector('.pref-toggle input[type="checkbox"]')
+      if (!input) return 'missing'
+      if (!input.checked) input.click()
+      return 'on'
+    })()`)
+    await sleep(500)
+    const afterEnable = readSettings()
+    record(
+      '勾选开关后写入应用数据目录',
+      enableClicked === 'on' && afterEnable !== null && afterEnable.restoreLastProject === true,
+      `界面=${String(enableClicked)} settings.json=${JSON.stringify(afterEnable)}`
+    )
+
+    const openedSecond = await evaluate(`(() => {
+      const card = [...document.querySelectorAll('.project-card')]
+        .find((item) => item.textContent.includes('第二项目'))
+      const button = card === undefined ? null : [...card.querySelectorAll('button')]
+        .find((item) => item.textContent.trim() === '打开')
+      if (!button || button.disabled) return false
+      button.click()
+      return true
+    })()`)
+    const onSecondProject = await waitFor(
+      `(() => {
+        const slot = document.querySelector('.project-slot:not(.hidden)')
+        return slot?.querySelector('h1')?.textContent === '第二项目'
+      })()`
+    )
+    const afterOpen = readSettings()
+    record(
+      '打开项目即记为上次项目',
+      openedSecond === true && onSecondProject === true && String(afterOpen?.lastProjectId).length > 0,
+      `点击=${String(openedSecond)} 已进入=${String(onSecondProject)} lastProjectId=${String(afterOpen?.lastProjectId)}`
+    )
+    record(
+      '偏好只写在应用数据目录，不落入用户项目',
+      !fs.existsSync(path.join(projectDir, 'settings.json')) &&
+        !fs.existsSync(path.join(relocatedDir, 'settings.json')),
+      '两个项目目录内都没有 settings.json'
+    )
+
     report()
   }
 
   function report() {
-    console.log('=== M1 端到端冒烟验证 ===')
+    console.log(`=== M1 端到端冒烟验证（阶段：${phase}）===`)
     console.log(`Electron ${process.versions.electron}　Node ${process.versions.node}`)
     console.log(`产物：out/main/index.js + out/renderer/index.html\n`)
 
@@ -1442,6 +1643,13 @@ function runChild() {
 
 /* ==================== 父进程 ==================== */
 
+/** 阶段顺序即验收场景 10 的时间顺序；后一阶段依赖前一阶段留在应用数据目录里的偏好。 */
+const PHASES = [
+  { name: 'main', timeout: 120000 },
+  { name: 'restore', timeout: 90000 },
+  { name: 'restore-off', timeout: 90000 }
+]
+
 if (process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE) {
   runChild()
 } else {
@@ -1451,14 +1659,36 @@ if (process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE) {
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
 
-  const result = spawnSync(ELECTRON_BIN, [__filename], {
-    cwd: ROOT,
-    env,
-    encoding: 'utf8',
-    timeout: 120000,
-    windowsHide: true
-  })
-  process.stdout.write(result.stdout || '')
-  if (result.stderr) process.stderr.write(result.stderr)
-  process.exit(result.status === null ? 1 : result.status)
+  let passed = 0
+  let total = 0
+  const perPhase = []
+
+  for (const item of PHASES) {
+    const result = spawnSync(ELECTRON_BIN, [__filename], {
+      cwd: ROOT,
+      env: { ...env, WORKBENCH_SMOKE_PHASE: item.name },
+      encoding: 'utf8',
+      timeout: item.timeout,
+      windowsHide: true
+    })
+
+    process.stdout.write(result.stdout || '')
+    if (result.stderr) process.stderr.write(result.stderr)
+
+    const matched = /合计：(\d+)\/(\d+) 项通过/.exec(result.stdout || '')
+    if (matched === null) {
+      // 子进程没跑到汇总行（异常退出或超时），计数不可信，直接终止
+      console.error(`阶段 ${item.name} 未产出汇总（退出码 ${String(result.status)}），已中止。`)
+      process.exit(1)
+    }
+
+    passed += Number(matched[1])
+    total += Number(matched[2])
+    perPhase.push(`${item.name} ${matched[1]}/${matched[2]}`)
+
+    if (Number(matched[1]) !== Number(matched[2])) break
+  }
+
+  console.log(`\n端到端合计：${passed}/${total} 项通过（${perPhase.join(' · ')}）`)
+  process.exit(passed === total && perPhase.length === PHASES.length ? 0 : 1)
 }

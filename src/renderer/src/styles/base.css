@@ -154,6 +154,13 @@ h3 {
   border-radius: 0;
 }
 
+/* 启动说明只解释「为什么没恢复」，不可点击关闭，因此不继承提示条的手型 */
+.inline-notice.banner {
+  margin: 0;
+  border-radius: 0;
+  cursor: default;
+}
+
 /* ---------- 标签 ---------- */
 
 .chip {

@@ -4,6 +4,7 @@ import { IpcChannel } from '@shared/ipc'
 import type { Project } from '@shared/types'
 import { app, BrowserWindow, shell } from 'electron'
 import { createHandle, type IpcContext, registerIpcHandlers } from './ipc'
+import { type AppSettingsStore, createSettingsStore } from './modules/app-settings'
 import { ProjectWatcher } from './modules/file-watcher'
 import { detectReadme, extractSummary } from './modules/markdown-preview'
 import { createRegistry, createRegistryStore, type ProjectRegistry, toSummary } from './modules/project-registry'
@@ -34,6 +35,7 @@ const isDev = !app.isPackaged
 const rendererDevUrl = process.env['ELECTRON_RENDERER_URL']
 
 let registry: ProjectRegistry | null = null
+let settings: AppSettingsStore | null = null
 
 /** 简介缓存：键为项目 ID，值为上次提取所用签名与结果 */
 const descriptionCache = new Map<string, { signature: string; text: string | null; source: 'readme' | 'path' }>()
@@ -43,6 +45,14 @@ function getRegistry(): ProjectRegistry {
     registry = createRegistry(createRegistryStore(join(app.getPath('userData'), 'projects.json')))
   }
   return registry
+}
+
+/** 应用级偏好落在应用数据目录，不写入任何用户项目（安全基线 § 六.10）。 */
+function getSettings(): AppSettingsStore {
+  if (settings === null) {
+    settings = createSettingsStore(join(app.getPath('userData'), 'settings.json'))
+  }
+  return settings
 }
 
 /* ---------------- 项目库服务 ---------------- */
@@ -189,6 +199,7 @@ function createIpcContext(): IpcContext {
   return {
     handle: createHandle({ isDev, rendererDevUrl }),
     registry: getRegistry,
+    settings: getSettings,
     projectRoot: resolveProjectRoot,
     describe: resolveDescription,
     listProjects,

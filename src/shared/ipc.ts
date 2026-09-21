@@ -32,6 +32,8 @@ export const IpcChannel = {
   appGetInfo: 'app:get-info',
   appConfirmQuit: 'app:confirm-quit',
   appQuitRequested: 'app:quit-requested',
+  appStartupView: 'app:startup-view',
+  settingsUpdate: 'settings:update',
   dialogSelectDirectory: 'dialog:select-directory',
 
   projectList: 'project:list',
@@ -133,6 +135,32 @@ export interface QuitRequestedEvent {
 export interface QuitConfirmRequest {
   /** true 表示确认退出（会话将被结束）；false 表示取消退出 */
   confirmed: boolean
+}
+
+/* ---------- 启动视图与应用偏好（C09 / 验收场景 10） ---------- */
+
+export interface StartupViewResult {
+  /** 「恢复上次项目」开关当前状态；界面用它渲染开关初始值 */
+  restoreLastProject: boolean
+  /** 启动时应直接打开的项目；null 表示停留项目库 */
+  projectId: string | null
+  /** 开关已开启但未能恢复时的说明；其余情况为 null */
+  notice: string | null
+}
+
+export interface UpdateSettingsRequest {
+  restoreLastProject: boolean
+}
+
+/**
+ * 应用级偏好。同时是 `settings.json` 的持久化形态（`app-settings.ts`），
+ * 因此这里的字段都是可恢复的启动位置信息，不是界面临时状态。
+ */
+export interface SettingsResult {
+  /** 「恢复上次项目」开关；默认关闭（C09） */
+  restoreLastProject: boolean
+  /** 上次活跃的项目 ID；从未打开过为 null */
+  lastProjectId: string | null
 }
 
 /* ---------- 视图状态 ---------- */

@@ -73,6 +73,8 @@ export function registerProjectIpc(ctx: IpcContext): void {
   ctx.handle(IpcChannel.projectOpen, (_event, request: ProjectRef): ProjectSummary | null => {
     const touched = ctx.registry().touch(request.projectId)
     if (touched === null) return null
+    // 「上次活跃项目」与最近打开时间同时更新，供启动位置恢复使用（C09）
+    ctx.settings().recordActiveProject(touched.id)
     return toSummary(touched, (item) => ctx.describe(item))
   })
 

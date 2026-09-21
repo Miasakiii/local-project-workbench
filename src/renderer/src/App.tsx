@@ -1,5 +1,5 @@
 import type { AppInfo, ProjectSummary } from '@shared/types'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ProjectSidebar } from './components/ProjectSidebar'
 import { LibraryPage } from './pages/LibraryPage'
 import { ProjectPage } from './pages/ProjectPage'
@@ -19,9 +19,10 @@ function readSidebarPreference(): boolean {
  *
  * 布局：左侧项目侧边栏（应用级）+ 主区域（项目库或某个已打开的项目）+ 底部信息栏。
  *
- * 两个关键约定：
+ * 三个关键约定：
  * - **默认启动页为项目库首页**（C09）。「恢复上次项目」是可选开关，默认关闭；
- *   该开关**尚未实现**（M1 遗留，推进计划 §7 记为转入 M3），当前行为固定为停留项目库。
+ *   开启后由主进程判定能否恢复，恢复不了就在项目库说明原因（见 `bootstrap`）。
+ * - **恢复的是位置，不是进程**：终端会话不跨启动保留。
  * - **已打开的项目保持挂载**（仅切换可见性），因此切换项目不会终止该项目的终端会话
  *   （设计稿 6.1）。关闭项目才会卸载它并结束其会话。
  */
@@ -44,6 +45,13 @@ export default function App(): React.JSX.Element {
   /** 待确认退出：主进程在退出前发现有活动会话 */
   const [pendingQuit, setPendingQuit] = useState<number | null>(null)
 
+  /** 「恢复上次项目」开关（应用级偏好，默认关闭，C09） */
+  const [restoreLastProject, setRestoreLastProject] = useState(false)
+  /** 开关已开启但没能恢复时的说明；打开任一项目后消失 */
+  const [startupNotice, setStartupNotice] = useState<string | null>(null)
+  /** 启动位置只在首次加载时应用一次 */
+  const bootstrapped = useRef(false)
+
   useEffect(() => {
     try {
       window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(sidebarOpen))
@@ -52,26 +60,20 @@ export default function App(): React.JSX.Element {
     }
   }, [sidebarOpen])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<ProjectSummary[]> => {
     setLoading(true)
     try {
       const list = await window.workbench.project.list()
       setProjects(list)
       setFatalError(null)
+      return list
     } catch (error) {
       setFatalError(error instanceof Error ? error.message : String(error))
+      return []
     } finally {
       setLoading(false)
     }
   }, [])
-
-  useEffect(() => {
-    void window.workbench.app
-      .getInfo()
-      .then(setInfo)
-      .catch(() => setInfo(null))
-    void refresh()
-  }, [refresh])
 
   // 只有活动项目被监听（设计稿 5.3）；回到项目库即停止监听
   useEffect(() => {
@@ -97,12 +99,49 @@ export default function App(): React.JSX.Element {
   }, [projects])
 
   const activateProject = useCallback(async (projectId: string) => {
+    setStartupNotice(null)
     setOpenProjectIds((current) => (current.includes(projectId) ? current : [...current, projectId]))
     setActiveProjectId(projectId)
     const updated = await window.workbench.project.open({ projectId })
     if (updated !== null) {
       setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)))
     }
+  }, [])
+
+  /**
+   * 首帧加载：列表 + 启动位置。
+   *
+   * 恢复与否由主进程判定（它才掌握登记表与磁盘现状），这里只照做：
+   * 要打开哪个项目就直接打开，打不开时把原因显示出来，不静默停在项目库。
+   */
+  const bootstrap = useCallback(async () => {
+    void window.workbench.app
+      .getInfo()
+      .then(setInfo)
+      .catch(() => setInfo(null))
+
+    const list = await refresh()
+    if (bootstrapped.current) return
+    bootstrapped.current = true
+
+    const view = await window.workbench.app.startupView()
+    setRestoreLastProject(view.restoreLastProject)
+    const target = view.projectId
+    if (target !== null && list.some((project) => project.id === target)) {
+      await activateProject(target)
+      return
+    }
+    if (view.notice !== null) setStartupNotice(view.notice)
+  }, [activateProject, refresh])
+
+  useEffect(() => {
+    // 取不到启动位置时停留项目库——这正是 C09 的默认行为，无需打扰用户
+    bootstrap().catch(() => undefined)
+  }, [bootstrap])
+
+  const setRestoreLastProjectPreference = useCallback(async (enabled: boolean) => {
+    const saved = await window.workbench.settings.update({ restoreLastProject: enabled })
+    setRestoreLastProject(saved.restoreLastProject)
   }, [])
 
   const closeProject = useCallback(
@@ -171,6 +210,8 @@ export default function App(): React.JSX.Element {
         </p>
       ) : null}
 
+      {startupNotice !== null ? <p className="inline-notice banner">{startupNotice}</p> : null}
+
       <div className="app-body">
         <ProjectSidebar
           open={sidebarOpen}
@@ -189,11 +230,13 @@ export default function App(): React.JSX.Element {
               projects={projects}
               loading={loading}
               sidebarOpen={sidebarOpen}
+              restoreLastProject={restoreLastProject}
               onToggleSidebar={toggleSidebar}
               onRefresh={refresh}
               onOpenProject={(projectId) => void activateProject(projectId)}
               onRegister={register}
               registerBusy={registerBusy}
+              onSetRestoreLastProject={(enabled) => void setRestoreLastProjectPreference(enabled)}
             />
           ) : null}
 

@@ -1,5 +1,6 @@
 import type { ProjectSummary } from '@shared/ipc'
 import type { Project } from '@shared/types'
+import type { AppSettingsStore } from '../modules/app-settings'
 import type { ProjectWatcher } from '../modules/file-watcher'
 import type { ProjectRegistry } from '../modules/project-registry'
 import type { PtySessionManager } from '../modules/pty-session'
@@ -16,6 +17,8 @@ export interface IpcContext {
   /** 带来源校验的通道注册函数 */
   handle: HandleFn
   registry(): ProjectRegistry
+  /** 应用级偏好（「恢复上次项目」开关与上次活跃项目） */
+  settings(): AppSettingsStore
   /** 解析项目根目录；项目不可用时抛出 */
   projectRoot(projectId: string): string
   describe(project: Project): { text: string | null; source: 'user' | 'readme' | 'path' }
