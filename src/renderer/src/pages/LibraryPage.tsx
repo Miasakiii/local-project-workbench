@@ -12,6 +12,8 @@ interface LibraryPageProps {
   editorPath: string | null
   /** 打开主进程编辑器选择器并持久化 */
   onConfigureEditor: () => void
+  /** 清空已设置的编辑器，回到未设置 */
+  onClearEditor: () => void
   onToggleSidebar: () => void
   /** 刷新项目列表；返回最新列表供调用方直接使用，本组件不消费其结果 */
   onRefresh: () => Promise<unknown>
@@ -39,6 +41,7 @@ export function LibraryPage({
   restoreLastProject,
   editorPath,
   onConfigureEditor,
+  onClearEditor,
   onToggleSidebar,
   onRefresh,
   onOpenProject,
@@ -199,6 +202,16 @@ export function LibraryPage({
           >
             编辑器：{editorLabel}
           </button>
+          {editorPath !== null ? (
+            <button
+              type="button"
+              className="editor-clear"
+              onClick={() => onClearEditor()}
+              title="清空已设置的编辑器，回到未设置（「用默认程序打开」不受影响）"
+            >
+              清空编辑器
+            </button>
+          ) : null}
           <button type="button" onClick={() => void onRefresh()} disabled={loading}>
             刷新
           </button>

@@ -201,6 +201,9 @@ const api = {
     /** 选择并保存用于打开文件的编辑器（主进程选 exe，持久化到 settings.json）；取消返回 null */
     setEditor: (): Promise<string | null> => ipcRenderer.invoke(IpcChannel.systemSetEditor),
 
+    /** 清空已设置的编辑器，回到「未设置」；返回清空后的 editorPath（null） */
+    clearEditor: (): Promise<string | null> => ipcRenderer.invoke(IpcChannel.systemClearEditor),
+
     showInFolder: (request: OpenPathRequest): Promise<boolean> =>
       ipcRenderer.invoke(IpcChannel.systemShowInFolder, request)
   },

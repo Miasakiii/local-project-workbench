@@ -153,6 +153,12 @@ export default function App(): React.JSX.Element {
     setEditorPath(path)
   }, [])
 
+  /** 清空编辑器，回到未设置 */
+  const clearEditor = useCallback(async () => {
+    await window.workbench.system.clearEditor()
+    setEditorPath(null)
+  }, [])
+
   const closeProject = useCallback(
     (projectId: string) => {
       const remaining = openProjectIds.filter((id) => id !== projectId)
@@ -250,6 +256,7 @@ export default function App(): React.JSX.Element {
               onSetRestoreLastProject={(enabled) => void setRestoreLastProjectPreference(enabled)}
               editorPath={editorPath}
               onConfigureEditor={() => void configureEditor()}
+              onClearEditor={() => void clearEditor()}
             />
           ) : null}
 

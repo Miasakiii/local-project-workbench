@@ -82,4 +82,7 @@ export function registerSystemIpc(ctx: IpcContext): void {
     child.unref()
     return outcome
   })
+
+  // 清空编辑器，回到「未设置」（用默认程序打开不受影响）。
+  ctx.handle(IpcChannel.systemClearEditor, (): string | null => ctx.settings().setEditorPath(null).editorPath)
 }

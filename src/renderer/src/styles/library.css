@@ -49,6 +49,10 @@
   cursor: pointer;
 }
 
+.editor-clear {
+  color: #b23b3b;
+}
+
 .project-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));

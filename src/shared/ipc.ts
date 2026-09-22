@@ -70,6 +70,7 @@ export const IpcChannel = {
   systemShowInFolder: 'system:show-in-folder',
   systemOpenWith: 'system:open-with',
   systemSetEditor: 'system:set-editor',
+  systemClearEditor: 'system:clear-editor',
 
   terminalCreate: 'terminal:create',
   terminalWrite: 'terminal:write',
