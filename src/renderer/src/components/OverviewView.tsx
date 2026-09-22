@@ -6,7 +6,10 @@ interface OverviewViewProps {
   projectId: string
   /** 用户指定的介绍文件；null 表示自动识别 */
   readmePath: string | null
+  /** 本项目是否允许加载网络图片（设计稿 4.3，默认关闭） */
+  allowNetworkImages: boolean
   onReadmePathChange: (relativePath: string | null) => void
+  onAllowNetworkImagesChange: (next: boolean) => void
   onNavigateProjectPath: (relativePath: string) => void
 }
 
@@ -22,7 +25,9 @@ interface OverviewViewProps {
 export function OverviewView({
   projectId,
   readmePath,
+  allowNetworkImages,
   onReadmePathChange,
+  onAllowNetworkImagesChange,
   onNavigateProjectPath
 }: OverviewViewProps): React.JSX.Element {
   const [detection, setDetection] = useState<ReadmeDetection | null>(null)
@@ -52,6 +57,7 @@ export function OverviewView({
     }
   }, [projectId, readmePath])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: allowNetworkImages 是刻意的触发依赖——授权改变会换掉主进程的净化输出形态（remote ↔ blocked），效果体本身不读它
   useEffect(() => {
     if (selected === null) {
       setPreview(null)
@@ -77,7 +83,7 @@ export function OverviewView({
     return () => {
       cancelled = true
     }
-  }, [projectId, selected])
+  }, [projectId, selected, allowNetworkImages])
 
   const openPicker = useCallback(async () => {
     setPicking(true)
@@ -205,6 +211,8 @@ export function OverviewView({
           projectId={projectId}
           document={preview.markdown}
           onNavigateProjectPath={onNavigateProjectPath}
+          allowNetworkImages={allowNetworkImages}
+          onAllowNetworkImagesChange={onAllowNetworkImagesChange}
         />
       ) : null}
 

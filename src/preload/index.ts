@@ -26,6 +26,8 @@ import type {
   QuitConfirmRequest,
   QuitRequestedEvent,
   RegisterProjectResult,
+  RemoteAssetRequestPayload,
+  RemoteAssetResult,
   RenameEntryResult,
   SettingsResult,
   StartupViewResult,
@@ -135,6 +137,13 @@ const api = {
     /** 读取项目内图片资源，返回 data URL */
     readAsset: (request: AssetRequestPayload): Promise<AssetReadResult> =>
       ipcRenderer.invoke(IpcChannel.markdownReadAsset, request),
+
+    /**
+     * 换取已授权项目的网络图片，由主进程抓取后返回 data URL。
+     * 渲染进程不直连远程地址，授权与否也只由主进程按登记记录判定。
+     */
+    readRemoteAsset: (request: RemoteAssetRequestPayload): Promise<RemoteAssetResult> =>
+      ipcRenderer.invoke(IpcChannel.markdownReadRemoteAsset, request),
 
     /** 删除到系统回收站；不可回收时整批停止并说明 */
     deleteToTrash: (request: FileDeleteRequest): Promise<DeleteEntriesResult> =>

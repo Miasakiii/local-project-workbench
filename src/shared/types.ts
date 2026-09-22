@@ -32,6 +32,11 @@ export interface Project {
    * null 表示尚未探测或探测失败——界面须与「确定不是仓库」分别表述。
    */
   isGitRepository: boolean | null
+  /**
+   * 是否允许本项目加载 README 里的网络图片（设计稿 4.3）。
+   * 默认关闭；开启后仍只由主进程代理抓取，渲染进程不直接发起网络请求。
+   */
+  allowNetworkImages: boolean
 }
 
 /** 项目首页的三个页面 */
@@ -234,6 +239,32 @@ export interface AssetReadResult {
   message: string | null
 }
 
+/**
+ * 网络图片的读取结果（设计稿 4.3）。
+ *
+ * 与项目内资源分开表达，因为失败原因不同：未授权、协议不支持、指向本机或内网
+ * 都是**策略结论**而非读取故障，界面须分别说明，不得合并成「加载失败」。
+ */
+export type RemoteAssetStatus =
+  | 'ok'
+  | 'not-authorized'
+  | 'unsupported-protocol'
+  | 'forbidden-host'
+  | 'unsupported-format'
+  | 'too-large'
+  | 'unreachable'
+
+export interface RemoteAssetResult {
+  status: RemoteAssetStatus
+  /** 请求的地址（原样回显，便于界面定位是哪一张图） */
+  url: string
+  mime: string | null
+  /** data URL；仅 status 为 ok 时存在。远程内容一律经主进程换取，渲染进程不直连 */
+  dataUrl: string | null
+  bytes: number
+  message: string | null
+}
+
 /* ---------- 文件操作（设计稿第 7 章） ---------- */
 
 /** 文件操作失败原因。界面据此给出具体说明，不呈现为统一成功或统一失败。 */
@@ -311,6 +342,8 @@ export interface ProjectSummary {
   trusted: boolean
   /** true 是仓库，false 不是，null 表示 Git 不可用或尚未探测 */
   isGitRepository: boolean | null
+  /** 本项目是否被允许加载 README 中的网络图片（设计稿 4.3，默认关闭） */
+  allowNetworkImages: boolean
   available: boolean
   unavailableReason: string | null
 }

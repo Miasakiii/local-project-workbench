@@ -6,6 +6,10 @@ interface MarkdownPreviewProps {
   document: MarkdownDocument
   /** 点击项目内链接时在应用内跳转（不发起页面导航） */
   onNavigateProjectPath: (relativePath: string) => void
+  /** 本项目是否已允许加载网络图片；用于渲染开关的初始状态 */
+  allowNetworkImages?: boolean
+  /** 提供时才渲染「加载网络图片」开关；缺席的场合（如文件页预览）只跟随已有授权 */
+  onAllowNetworkImagesChange?: (next: boolean) => void
 }
 
 /** 构造一个不执行任何内容的占位节点，用于替换无法加载的图片。 */
@@ -20,31 +24,51 @@ function createPlaceholder(label: string, detail: string): HTMLElement {
   return wrapper
 }
 
+/** 占位标签只用主机名：完整 URL 往往很长，会把界面撑开成噪声。 */
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
 /**
  * Markdown 预览（设计稿 4.3，M1-5）。
  *
  * 安全约定：
  * - `html` 已由主进程净化并自审；本组件不再做任何字符串拼接。
- * - 图片不通过 URL 加载：按 `data-asset` 经主进程换取 data URL 后再赋给 `src`。
+ * - 图片不通过 URL 加载：项目内按 `data-asset`、远程按 `data-remote` 经主进程换取
+ *   data URL 后再赋给 `src`。**本组件从不向远程地址直接发起请求。**
  * - 外链不带 `href`，点击后交给系统浏览器；项目内链接在应用内跳转。
  * - 禁止脚本：本组件从不执行文档中的任何内容。
  */
 export function MarkdownPreview({
   projectId,
-  document,
-  onNavigateProjectPath
+  document: markdown,
+  onNavigateProjectPath,
+  allowNetworkImages = false,
+  onAllowNetworkImagesChange
 }: MarkdownPreviewProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const [noticesOpen, setNoticesOpen] = useState(false)
   const [assetErrors, setAssetErrors] = useState<string[]>([])
+  /** 远程图片的失败说明；与项目内资源的失败分开列，原因不同（策略 vs 读取） */
+  const [remoteNotices, setRemoteNotices] = useState<{ host: string; message: string }[]>([])
 
   const blockedGroups = useMemo(() => {
     const groups = new Map<BlockedNotice['reason'], number>()
-    for (const notice of document.blocked) {
+    for (const notice of markdown.blocked) {
       groups.set(notice.reason, (groups.get(notice.reason) ?? 0) + 1)
     }
     return [...groups.entries()]
-  }, [document.blocked])
+  }, [markdown.blocked])
+
+  /** 本文档是否涉及网络图片：被阻止的远程资源，或已授权但尚未加载的地址。 */
+  const remoteImageCount = useMemo(() => {
+    const blocked = markdown.blocked.filter((notice) => notice.reason === 'remote-resource' && notice.kind === 'image')
+    return blocked.length + markdown.remoteAssets.length
+  }, [markdown])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: document 是刻意的触发依赖——效果体只操作 DOM ref，但必须在新的净化结果注入后重新加载资源
   useEffect(() => {
@@ -53,6 +77,11 @@ export function MarkdownPreview({
 
     let cancelled = false
     const failures: string[] = []
+    const remoteFailures: { host: string; message: string }[] = []
+
+    const replaceImage = (image: HTMLImageElement, label: string, detail: string): void => {
+      image.replaceWith(createPlaceholder(label, detail))
+    }
 
     const loadAsset = (image: HTMLImageElement): void => {
       const relativePath = image.getAttribute('data-asset')
@@ -67,14 +96,14 @@ export function MarkdownPreview({
             return
           }
           failures.push(`${relativePath}：${result.message ?? '无法加载'}`)
-          image.replaceWith(createPlaceholder(relativePath, result.message ?? '无法加载该图片'))
+          replaceImage(image, relativePath, result.message ?? '无法加载该图片')
           setAssetErrors([...failures])
         })
         .catch((error: unknown) => {
           if (cancelled || !image.isConnected) return
           const message = error instanceof Error ? error.message : String(error)
           failures.push(`${relativePath}：${message}`)
-          image.replaceWith(createPlaceholder(relativePath, message))
+          replaceImage(image, relativePath, message)
           setAssetErrors([...failures])
         })
     }
@@ -83,16 +112,37 @@ export function MarkdownPreview({
       loadAsset(image)
     }
 
-    // 已获项目授权的外部图片：本版策略恒为关闭，出现时给出说明而不是静默空白
+    // 已获项目授权的外部图片：由主进程代取并转成 data URL；未授权时不会走到这里
     for (const image of Array.from(host.querySelectorAll<HTMLImageElement>('img[data-remote]'))) {
-      const url = image.getAttribute('data-remote') ?? ''
-      image.replaceWith(createPlaceholder(url, '网络图片不加载：本版未提供按项目允许的开关。'))
+      const url = image.getAttribute('data-remote')
+      if (url === null) continue
+      void window.workbench.file
+        .readRemoteAsset({ projectId, url })
+        .then((result) => {
+          if (cancelled || !image.isConnected) return
+          if (result.status === 'ok' && result.dataUrl !== null) {
+            image.src = result.dataUrl
+            image.classList.add('md-image')
+            return
+          }
+          const message = result.message ?? '未能加载该网络图片'
+          remoteFailures.push({ host: hostLabel(url), message })
+          replaceImage(image, hostLabel(url), message)
+          setRemoteNotices([...remoteFailures])
+        })
+        .catch((error: unknown) => {
+          if (cancelled || !image.isConnected) return
+          const message = error instanceof Error ? error.message : String(error)
+          remoteFailures.push({ host: hostLabel(url), message })
+          replaceImage(image, hostLabel(url), message)
+          setRemoteNotices([...remoteFailures])
+        })
     }
 
     return () => {
       cancelled = true
     }
-  }, [projectId, document])
+  }, [projectId, markdown])
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const target = event.target as HTMLElement | null
@@ -113,19 +163,41 @@ export function MarkdownPreview({
     }
   }
 
-  const allNotices: BlockedNotice[] = document.blocked
+  const allNotices: BlockedNotice[] = markdown.blocked
 
   return (
     <div className="markdown-preview">
-      {document.truncated ? (
+      {markdown.truncated ? (
         <p className="inline-warning">文件超过 5 MB，仅显示前 5 MB 内容。完整内容请用外部程序打开。</p>
       ) : null}
 
-      {document.violations.length > 0 ? (
-        <p className="inline-error">渲染自审发现问题，已拒绝采用该输出：{document.violations.join('；')}</p>
+      {markdown.violations.length > 0 ? (
+        <p className="inline-error">渲染自审发现问题，已拒绝采用该输出：{markdown.violations.join('；')}</p>
       ) : null}
 
       {assetErrors.length > 0 ? <p className="inline-warning">部分图片未能加载：{assetErrors.join('；')}</p> : null}
+
+      {remoteNotices.length > 0 ? (
+        <p className="inline-warning">
+          部分网络图片未加载：
+          {remoteNotices.map((notice) => `${notice.host}：${notice.message}`).join('；')}
+        </p>
+      ) : null}
+
+      {remoteImageCount > 0 && onAllowNetworkImagesChange !== undefined ? (
+        <label className="remote-image-policy">
+          <input
+            type="checkbox"
+            checked={allowNetworkImages}
+            onChange={(event) => onAllowNetworkImagesChange(event.target.checked)}
+          />
+          <span>允许本项目加载网络图片</span>
+          <span className="hint">
+            默认不加载。开启后由应用代为抓取，只接受 http/https 的栅格图片，单张不超过 5 MB，
+            指向本机或内网的地址一律拒绝。
+          </span>
+        </label>
+      ) : null}
 
       {allNotices.length > 0 ? (
         <div className="blocked-panel">
@@ -154,7 +226,7 @@ export function MarkdownPreview({
         ref={hostRef}
         onClick={handleClick}
         // biome-ignore lint/security/noDangerouslySetInnerHtml: 内容由主进程净化层产出并自审（markdown-sanitize），净化层永不写出 src/href 原始值
-        dangerouslySetInnerHTML={{ __html: document.html }}
+        dangerouslySetInnerHTML={{ __html: markdown.html }}
       />
     </div>
   )

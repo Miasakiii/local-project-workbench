@@ -65,6 +65,8 @@ function sanitizeProject(raw: unknown): Project | null {
     pinned: toBoolean(raw['pinned'], false),
     lastOpenedAt: typeof raw['lastOpenedAt'] === 'string' ? raw['lastOpenedAt'] : new Date(0).toISOString(),
     trusted: toBoolean(raw['trusted'], false),
+    // 旧版本 projects.json 无此字段时按默认关闭恢复（设计稿 4.3）
+    allowNetworkImages: toBoolean(raw['allowNetworkImages'], false),
     isGitRepository
   }
 }
@@ -208,6 +210,8 @@ export class ProjectRegistry {
       pinned: false,
       lastOpenedAt: new Date().toISOString(),
       trusted: false,
+      // 新登记项目一律默认关闭网络图片（设计稿 4.3：默认不加载）
+      allowNetworkImages: false,
       isGitRepository: null
     }
 
@@ -304,7 +308,16 @@ export class ProjectRegistry {
   update(
     projectId: string,
     patch: Partial<
-      Pick<Project, 'pinned' | 'trusted' | 'displayName' | 'readmePath' | 'descriptionOverride' | 'isGitRepository'>
+      Pick<
+        Project,
+        | 'pinned'
+        | 'trusted'
+        | 'displayName'
+        | 'readmePath'
+        | 'descriptionOverride'
+        | 'isGitRepository'
+        | 'allowNetworkImages'
+      >
     >
   ): Project | null {
     const data = this.data()
@@ -320,6 +333,7 @@ export class ProjectRegistry {
       if (patch.readmePath !== undefined) next.readmePath = patch.readmePath
       if (patch.descriptionOverride !== undefined) next.descriptionOverride = patch.descriptionOverride
       if (patch.isGitRepository !== undefined) next.isGitRepository = patch.isGitRepository
+      if (patch.allowNetworkImages !== undefined) next.allowNetworkImages = patch.allowNetworkImages
       updated = next
       return next
     })
@@ -388,6 +402,7 @@ export function toSummary(
     lastOpenedAt: project.lastOpenedAt,
     trusted: project.trusted,
     isGitRepository: project.isGitRepository,
+    allowNetworkImages: project.allowNetworkImages,
     available,
     unavailableReason
   }

@@ -162,6 +162,10 @@ function runChild() {
 
   function buildFixture() {
     removeTree(fixtureRoot)
+    // 上一轮若中途失败，会把「恢复上次项目」留在开启状态，下一次启动就会直接进项目页，
+    // 让「首次启动停留项目库」这类断言测到污染的起点。只在 main 阶段重置——
+    // restore / restore-off 两个阶段靠的正是 main 留下的这份偏好文件。
+    if (phase === 'main') fs.rmSync(settingsFile(), { force: true })
     fs.mkdirSync(path.join(projectDir, 'assets'), { recursive: true })
     fs.mkdirSync(path.join(projectDir, 'src'), { recursive: true })
     fs.mkdirSync(path.join(projectDir, 'target'), { recursive: true })
@@ -170,7 +174,8 @@ function runChild() {
     fs.mkdirSync(secondDir, { recursive: true })
     fs.writeFileSync(
       path.join(projectDir, 'README.md'),
-      '# 冒烟项目\n\n用于端到端验证的项目简介段落。\n\n![图](assets/logo.png)\n\n<script>alert(1)</script>\n'
+      '# 冒烟项目\n\n用于端到端验证的项目简介段落。\n\n![图](assets/logo.png)\n\n' +
+        '![徽标](https://badge.example/logo.png)\n\n<script>alert(1)</script>\n'
     )
     fs.writeFileSync(
       path.join(projectDir, 'assets', 'logo.png'),
@@ -601,6 +606,137 @@ function runChild() {
     })()`)
     record('项目库卡片可打开项目', opened === true, opened ? '已进入项目页' : '未找到「打开」按钮')
     await waitFor(`document.querySelectorAll('.project-page').length > 0`)
+
+    /* ---------- 网络图片按项目授权（设计稿 4.3 / G1） ---------- */
+
+    const registryFile = path.join(app.getPath('userData'), 'projects.json')
+    const readRegistryFlag = (projectId) => {
+      try {
+        const raw = JSON.parse(fs.readFileSync(registryFile, 'utf8'))
+        const item = (raw?.data?.projects ?? []).find((project) => project.id === projectId)
+        return item === undefined ? null : item.allowNetworkImages
+      } catch {
+        return null
+      }
+    }
+    const waitRegistryFlag = async (projectId, expected) => {
+      const started = Date.now()
+      while (Date.now() - started < 5000) {
+        if (readRegistryFlag(projectId) === expected) return true
+        await sleep(120)
+      }
+      return false
+    }
+    const blockedToggle = () => evaluate(`(document.querySelector('.blocked-toggle')?.textContent ?? '').trim()`)
+    /** 概览页的介绍文件是异步读取的，断言前必须等它落地，否则测到的是「还没渲染」 */
+    const switchPresent = await waitFor(
+      `document.querySelector('.remote-image-policy input[type="checkbox"]') !== null`
+    )
+
+    const policySwitch = await evaluate(`(() => {
+      const label = document.querySelector('.remote-image-policy')
+      const box = label === null ? null : label.querySelector('input[type="checkbox"]')
+      return {
+        present: label !== null,
+        checked: box === null ? null : box.checked,
+        text: label === null ? '' : label.textContent
+      }
+    })()`)
+    record(
+      'README 区出现「允许本项目加载网络图片」开关',
+      switchPresent && policySwitch.present && policySwitch.checked === false,
+      `存在=${String(policySwitch.present)} 勾选=${String(policySwitch.checked)}`
+    )
+    record(
+      '开关旁写明代为抓取与限制条件',
+      policySwitch.text.includes('由应用代为抓取') && policySwitch.text.includes('本机或内网'),
+      policySwitch.text.slice(0, 46)
+    )
+    record(
+      '旧登记记录（无该字段）按默认关闭处理',
+      readRegistryFlag('smoke-project') === false,
+      `projects.json 字段=${String(readRegistryFlag('smoke-project'))}`
+    )
+
+    const blockedBeforeSeen = await waitFor(
+      `(() => { const t = document.querySelector('.blocked-toggle'); return t !== null && t.textContent.includes('网络资源') })()`
+    )
+    const blockedBefore = await blockedToggle()
+    record('未授权：远程图片计入被阻止清单', blockedBeforeSeen && blockedBefore.includes('网络资源'), blockedBefore)
+
+    await evaluate(`(() => {
+      const box = document.querySelector('.remote-image-policy input[type="checkbox"]')
+      if (box !== null) box.click()
+    })()`)
+    const granted = await waitRegistryFlag('smoke-project', true)
+    record('勾选后授权写入 projects.json', granted, `allowNetworkImages=${String(readRegistryFlag('smoke-project'))}`)
+    record(
+      '授权只写应用数据目录，不在用户项目内留文件',
+      !fs.existsSync(path.join(projectDir, 'projects.json')) && !fs.existsSync(path.join(projectDir, 'settings.json')),
+      projectDir
+    )
+
+    // 授权改变的是一次新的预览请求，等预览回到「不再计网络资源」再取界面状态
+    const grantedViewSeen = await waitFor(
+      `(() => { const t = document.querySelector('.blocked-toggle'); return t === null || !t.textContent.includes('网络资源') })()`
+    )
+    const afterGrant = await evaluate(`(() => {
+      const images = [...document.querySelectorAll('.markdown-body img')]
+      return {
+        blocked: (document.querySelector('.blocked-toggle')?.textContent ?? '').trim(),
+        httpSrc: images.filter((image) => /^https?:/i.test(image.getAttribute('src') ?? '')).length
+      }
+    })()`)
+    record(
+      '授权后远程图片不再计入「网络资源」被阻止项',
+      grantedViewSeen && !afterGrant.blocked.includes('网络资源'),
+      afterGrant.blocked
+    )
+    const grantedDoc = await evaluate(
+      `window.workbench.file.preview({ projectId: ${JSON.stringify(projectId)}, relativePath: 'README.md' })`
+    )
+    record(
+      '授权后主进程把远程图片改标为待取资源（仍不写出 src）',
+      (grantedDoc?.markdown?.remoteAssets ?? []).includes('https://badge.example/logo.png') &&
+        (grantedDoc?.markdown?.html ?? '').includes('data-remote=') &&
+        !/\ssrc\s*=/i.test(grantedDoc?.markdown?.html ?? ''),
+      `remote=${(grantedDoc?.markdown?.remoteAssets ?? []).join(', ')}`
+    )
+    record(
+      '渲染层从不直连远程地址（DOM 内无 http(s) 的 img[src]）',
+      afterGrant.httpSrc === 0,
+      `httpSrc 数=${afterGrant.httpSrc}`
+    )
+
+    const remoteExplained = await waitFor(`(() => {
+      const scope = document.querySelector('.markdown-preview')
+      const text = scope === null ? '' : scope.textContent
+      return text.includes('badge.example') || text.includes('部分网络图片未加载') ||
+        [...document.querySelectorAll('.markdown-body img.md-image')].length > 0
+    })()`)
+    const remoteState = await evaluate(`(() => {
+      const loaded = [...document.querySelectorAll('.markdown-body img')].filter(
+        (image) => (image.getAttribute('data-remote') ?? '').includes('badge.example') && image.classList.contains('md-image')
+      ).length
+      const placeholders = [...document.querySelectorAll('.md-image-placeholder')].map((node) => node.textContent).join(' / ')
+      return { loaded, placeholders }
+    })()`)
+    record(
+      '远程图片要么经主进程取回、要么如实说明，不静默空白',
+      remoteExplained,
+      `已加载=${remoteState.loaded} 占位=${remoteState.placeholders.slice(0, 60)}`
+    )
+
+    await evaluate(`(() => {
+      const box = document.querySelector('.remote-image-policy input[type="checkbox"]')
+      if (box !== null) box.click()
+    })()`)
+    const revoked = await waitRegistryFlag('smoke-project', false)
+    record('取消勾选即撤销授权并持久化', revoked, `allowNetworkImages=${String(readRegistryFlag('smoke-project'))}`)
+    const blockedAgainSeen = await waitFor(
+      `(() => { const t = document.querySelector('.blocked-toggle'); return t !== null && t.textContent.includes('网络资源') })()`
+    )
+    record('撤销后下一次预览回到阻止形态', blockedAgainSeen, await blockedToggle())
 
     /* ---------- 侧边栏：项目列表 ---------- */
 

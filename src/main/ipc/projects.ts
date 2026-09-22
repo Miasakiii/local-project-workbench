@@ -63,6 +63,7 @@ export function registerProjectIpc(ctx: IpcContext): void {
     if (request.displayName !== undefined) patch.displayName = request.displayName
     if (request.readmePath !== undefined) patch.readmePath = request.readmePath
     if (request.descriptionOverride !== undefined) patch.descriptionOverride = request.descriptionOverride
+    if (request.allowNetworkImages !== undefined) patch.allowNetworkImages = request.allowNetworkImages
 
     const updated = ctx.registry().update(request.projectId, patch)
     if (updated === null) return null

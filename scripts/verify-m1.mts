@@ -6,9 +6,11 @@
  *   - 验收场景 3：README 的项目内相对图片可正确显示；脚本与项目外路径被阻止。
  *   - 验收场景 9：非 Git 目录可用，界面不误报为错误状态。
  *   - 无 README 的项目可用（M1-6）。
+ *   - 网络图片按项目授权（设计稿 4.3）：默认关闭、授权与撤销均持久化、旧记录回退为关闭，
+ *     预览输出形态随授权切换（blocked ↔ data-remote），且两种形态都不写出可加载的 src。
  *
  * 用法：
- *   node --experimental-strip-types --import ./scripts/ts-loader/register.mjs scripts/verify-m1.mts
+ *   node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m1.mts
  */
 
 import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -280,6 +282,134 @@ function main(): void {
     '无 README 时回退到路径且项目仍可用',
     plainSummary?.descriptionSource === 'path' && plainSummary?.available === true,
     `source=${String(plainSummary?.descriptionSource)} available=${String(plainSummary?.available)}`
+  )
+
+  /* ---------- 网络图片授权（设计稿 4.3 / G1） ---------- */
+
+  check(
+    '新登记项目默认不加载网络图片',
+    first.project?.allowNetworkImages === false,
+    `allowNetworkImages=${String(first.project?.allowNetworkImages)}`
+  )
+
+  const remoteDir = join(root, 'remote-readme')
+  mkdirSync(remoteDir, { recursive: true })
+  writeFileSync(
+    join(remoteDir, 'README.md'),
+    '# 远程图片项目\n\n正文段落。\n\n![徽标](https://img.example/badge.png)\n',
+    'utf8'
+  )
+  const remoteProject = afterRemove.register(remoteDir)
+  const remoteId = remoteProject.project?.id ?? ''
+
+  afterRemove.update(remoteId, { allowNetworkImages: true })
+  const reloadedAfterGrant = createRegistry(createRegistryStore(storePath)).get(remoteId)
+  check(
+    '授权开关跨「重启」（新 store 实例）保持',
+    reloadedAfterGrant?.allowNetworkImages === true,
+    `allowNetworkImages=${String(reloadedAfterGrant?.allowNetworkImages)}`
+  )
+
+  const grantedSummary = afterRemove
+    .list()
+    .map((project) => toSummary(project, describe))
+    .find((project) => project.id === remoteId)
+  check(
+    '项目摘要带出授权状态供界面渲染开关',
+    grantedSummary?.allowNetworkImages === true,
+    `摘要=${String(grantedSummary?.allowNetworkImages)}`
+  )
+
+  afterRemove.update(remoteId, { allowNetworkImages: false })
+  const reloadedAfterRevoke = createRegistry(createRegistryStore(storePath)).get(remoteId)
+  check(
+    '撤销授权同样持久化——授权不是一扇单向门',
+    reloadedAfterRevoke?.allowNetworkImages === false,
+    `allowNetworkImages=${String(reloadedAfterRevoke?.allowNetworkImages)}`
+  )
+
+  const revokedSummary = afterRemove
+    .list()
+    .map((project) => toSummary(project, describe))
+    .find((project) => project.id === remoteId)
+  check(
+    '撤销后摘要立即回到关闭',
+    revokedSummary?.allowNetworkImages === false,
+    `摘要=${String(revokedSummary?.allowNetworkImages)}`
+  )
+
+  const legacyProjectPath = join(appDataDir, 'legacy-projects.json')
+  writeFileSync(
+    legacyProjectPath,
+    JSON.stringify({
+      version: 1,
+      data: {
+        projects: [
+          {
+            id: 'legacy-1',
+            displayName: '旧记录',
+            originalPath: remoteDir,
+            normalizedIdentity: remoteDir,
+            descriptionOverride: null,
+            readmePath: null,
+            pinned: false,
+            lastOpenedAt: '2026-09-01T00:00:00.000Z',
+            trusted: false,
+            isGitRepository: null
+          }
+        ],
+        viewStates: []
+      }
+    }),
+    'utf8'
+  )
+  const legacyProject = createRegistry(createRegistryStore(legacyProjectPath)).get('legacy-1')
+  check(
+    '缺少该字段的旧 projects.json 回退为关闭',
+    legacyProject?.allowNetworkImages === false,
+    `allowNetworkImages=${String(legacyProject?.allowNetworkImages)}`
+  )
+
+  const remoteRelative = 'README.md'
+  const remoteBlockedCount = (doc: ReturnType<typeof previewFile>['markdown']): number =>
+    doc?.blocked.filter((notice) => notice.reason === 'remote-resource' && notice.kind === 'image').length ?? -1
+
+  const deniedDoc = previewFile({ projectRoot: remoteDir, relativePath: remoteRelative }).markdown
+  check(
+    '未授权：远程图片进入被阻止清单且不产出可加载地址',
+    remoteBlockedCount(deniedDoc) === 1 &&
+      (deniedDoc?.remoteAssets.length ?? -1) === 0 &&
+      (deniedDoc?.html.includes('src=') ?? true) === false,
+    `blocked=${remoteBlockedCount(deniedDoc)} remote=${String(deniedDoc?.remoteAssets.length ?? -1)}`
+  )
+
+  const grantedDoc = previewFile({
+    projectRoot: remoteDir,
+    relativePath: remoteRelative,
+    policy: { allowNetworkImages: true, allowedImageHosts: [] }
+  }).markdown
+  check(
+    '已授权：改为 data-remote 标记，仍不写出 src',
+    (grantedDoc?.remoteAssets.length ?? -1) === 1 &&
+      (grantedDoc?.html.includes('data-remote=') ?? false) &&
+      (grantedDoc?.html.includes('src=') ?? true) === false,
+    `remote=${String(grantedDoc?.remoteAssets.length ?? -1)}`
+  )
+  check(
+    '已授权后不再计入「被阻止的网络资源」',
+    remoteBlockedCount(grantedDoc) === 0,
+    `blocked=${remoteBlockedCount(grantedDoc)}`
+  )
+
+  const revokedDoc = previewFile({
+    projectRoot: remoteDir,
+    relativePath: remoteRelative,
+    policy: { allowNetworkImages: false, allowedImageHosts: [] }
+  }).markdown
+  check(
+    '撤销授权后下一次预览即回到阻止形态',
+    (revokedDoc?.remoteAssets.length ?? -1) === 0 && remoteBlockedCount(revokedDoc) === 1,
+    `remote=${String(revokedDoc?.remoteAssets.length ?? -1)} blocked=${remoteBlockedCount(revokedDoc)}`
   )
 
   /* ---------- 目录不可用时的表达 ---------- */

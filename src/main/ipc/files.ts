@@ -11,13 +11,17 @@ import type {
   FilePreviewRequest,
   FileRenameRequest,
   FileTransferRequest,
+  RemoteAssetRequestPayload,
+  RemoteAssetResult,
   TransferEntriesResult
 } from '@shared/ipc'
 import { IpcChannel } from '@shared/ipc'
 import { shell } from 'electron'
 import { createEntry, deleteEntries, renameEntry, transferEntries } from '../modules/file-access'
 import { listDirectory, previewFile } from '../modules/file-browser'
+import type { PreviewPolicy } from '../modules/markdown-preview'
 import { readAsset } from '../modules/markdown-preview'
+import { readRemoteImage } from '../modules/remote-image'
 import type { IpcContext } from './context'
 
 /**
@@ -26,6 +30,15 @@ import type { IpcContext } from './context'
  * 渲染进程只传「项目 ID + 相对路径」，真实路径一律在此解析并复核归属。
  */
 export function registerFileIpc(ctx: IpcContext): void {
+  /**
+   * 预览策略一律由登记记录现算：渲染进程既不能声明「这个项目已授权网络图片」，
+   * 也不能靠缓存的界面状态绕过——撤销授权后下一次预览即生效。
+   */
+  const previewPolicy = (projectId: string): PreviewPolicy => ({
+    allowNetworkImages: ctx.registry().get(projectId)?.allowNetworkImages === true,
+    allowedImageHosts: []
+  })
+
   ctx.handle(
     IpcChannel.fileList,
     (_event, request: FileListRequest): FileListResult =>
@@ -40,7 +53,8 @@ export function registerFileIpc(ctx: IpcContext): void {
     (_event, request: FilePreviewRequest): FilePreview =>
       previewFile({
         projectRoot: ctx.projectRoot(request.projectId),
-        relativePath: request.relativePath
+        relativePath: request.relativePath,
+        policy: previewPolicy(request.projectId)
       })
   )
 
@@ -51,6 +65,16 @@ export function registerFileIpc(ctx: IpcContext): void {
         projectRoot: ctx.projectRoot(request.projectId),
         relativePath: request.relativePath,
         allowOversized: request.allowOversized === true
+      })
+  )
+
+  ctx.handle(
+    IpcChannel.markdownReadRemoteAsset,
+    (_event, request: RemoteAssetRequestPayload): Promise<RemoteAssetResult> =>
+      readRemoteImage({
+        url: request.url,
+        allowNetworkImages: ctx.registry().get(request.projectId)?.allowNetworkImages === true,
+        allowedImageHosts: []
       })
   )
 

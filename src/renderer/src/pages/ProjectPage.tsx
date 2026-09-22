@@ -321,10 +321,18 @@ export function ProjectPage({
           <OverviewView
             projectId={project.id}
             readmePath={project.readmePath}
+            allowNetworkImages={project.allowNetworkImages}
             onReadmePathChange={async (next) => {
               const updated = await window.workbench.project.update({
                 projectId: project.id,
                 readmePath: next
+              })
+              if (updated !== null) onProjectChange(updated)
+            }}
+            onAllowNetworkImagesChange={async (next) => {
+              const updated = await window.workbench.project.update({
+                projectId: project.id,
+                allowNetworkImages: next
               })
               if (updated !== null) onProjectChange(updated)
             }}

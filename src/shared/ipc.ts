@@ -15,6 +15,8 @@ import type {
   ProjectPage,
   ProjectSummary,
   ReadmeDetection,
+  RemoteAssetResult,
+  RemoteAssetStatus,
   RenameEntryResult,
   TransferEntriesResult
 } from './types'
@@ -55,6 +57,7 @@ export const IpcChannel = {
   fileRename: 'file:rename',
   fileTransfer: 'file:transfer',
   markdownReadAsset: 'markdown:read-asset',
+  markdownReadRemoteAsset: 'markdown:read-remote-asset',
 
   gitSnapshot: 'git:snapshot',
   gitFileDiff: 'git:file-diff',
@@ -102,6 +105,8 @@ export interface ProjectUpdateRequest {
   readmePath?: string | null
   /** 用户填写的简介；null 表示恢复自动提取 */
   descriptionOverride?: string | null
+  /** 「允许本项目加载网络图片」开关（设计稿 4.3） */
+  allowNetworkImages?: boolean
 }
 
 export interface ProjectRemoveResult {
@@ -225,6 +230,17 @@ export interface AssetRequestPayload {
   allowOversized?: boolean
 }
 
+/**
+ * 网络图片换取请求。
+ *
+ * 地址只接受「该项目上一次渲染结果里由主进程自己标记的 `data-remote` 值」，
+ * 主进程仍会独立复核协议、域名授权、体积与响应类型，不信任渲染进程传入的内容。
+ */
+export interface RemoteAssetRequestPayload {
+  projectId: string
+  url: string
+}
+
 export interface GitSnapshotRequest {
   projectId: string
   sequence: number
@@ -309,6 +325,8 @@ export type {
   ProjectPage,
   ProjectSummary,
   ReadmeDetection,
+  RemoteAssetResult,
+  RemoteAssetStatus,
   RenameEntryResult,
   TransferEntriesResult
 }
