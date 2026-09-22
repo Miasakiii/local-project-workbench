@@ -87,6 +87,8 @@ export function ProjectPage({
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeTabKey, setActiveTabKey] = useState<number | null>(null)
   const tabKeyRef = useRef(1)
+  /** 新建终端使用的 shell；空串=自动探测（G5） */
+  const [selectedShell, setSelectedShell] = useState('')
   /** 头部 Git 状态（G6）：当前分支与变更文件数，只读查询 */
   const [gitSnapshot, setGitSnapshot] = useState<GitSnapshot | null>(null)
   const gitSequenceRef = useRef(0)
@@ -446,6 +448,15 @@ export function ProjectPage({
                   重建会话
                 </button>
               ) : null}
+              <label className="terminal-shell" title="选择新建终端使用的 shell；缺省按本机自动探测">
+                <span className="hint">Shell</span>
+                <select value={selectedShell} onChange={(event) => setSelectedShell(event.target.value)}>
+                  <option value="">自动</option>
+                  <option value="pwsh">pwsh</option>
+                  <option value="powershell">PowerShell</option>
+                  <option value="cmd">cmd</option>
+                </select>
+              </label>
               <button type="button" onClick={() => openTerminalAt('')}>
                 新建标签
               </button>
@@ -510,6 +521,7 @@ export function ProjectPage({
                 projectId={project.id}
                 relativePath={tab.relativePath}
                 visible={terminalOpen && tab.key === activeTabKey}
+                shell={selectedShell}
                 onSessionChange={(sessionId) => updateTab(tab.key, { sessionId })}
               />
             </div>

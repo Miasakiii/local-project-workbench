@@ -11,6 +11,8 @@ interface TerminalViewProps {
   visible: boolean
   /** 会话建立或结束时回调，null 表示当前无活动会话 */
   onSessionChange: (sessionId: string | null) => void
+  /** 可选：指定 shell（pwsh／powershell／cmd）；仅在创建会话时读取，切换不重建 */
+  shell?: string
 }
 
 /**
@@ -26,11 +28,14 @@ export function TerminalView({
   projectId,
   relativePath,
   visible,
-  onSessionChange
+  onSessionChange,
+  shell
 }: TerminalViewProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const callbackRef = useRef(onSessionChange)
   const visibleRef = useRef(visible)
+  /** 选中的 shell；仅在创建会话时读取，切换不重建会话（入 ref 不入 effect 依赖） */
+  const shellRef = useRef<string | undefined>(shell !== undefined && shell.length > 0 ? shell : undefined)
 
   useEffect(() => {
     callbackRef.current = onSessionChange
@@ -40,6 +45,10 @@ export function TerminalView({
     // 面板由隐藏转为可见时，宿主尺寸从 0 变为实际尺寸，ResizeObserver 会触发校正
     visibleRef.current = visible
   }, [visible])
+
+  useEffect(() => {
+    shellRef.current = shell !== undefined && shell.length > 0 ? shell : undefined
+  }, [shell])
 
   useEffect(() => {
     const host = hostRef.current
@@ -108,7 +117,7 @@ export function TerminalView({
     })
 
     void window.workbench.terminal
-      .create({ projectId, relativePath, cols: term.cols, rows: term.rows })
+      .create({ projectId, relativePath, cols: term.cols, rows: term.rows, shell: shellRef.current })
       .then((result) => {
         if (disposed) {
           void window.workbench.terminal.dispose(result.sessionId)

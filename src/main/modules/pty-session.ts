@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
-import { join } from 'node:path'
 import type {
   TerminalCreateRequest,
   TerminalCreateResult,
@@ -13,6 +12,7 @@ import { IpcChannel } from '@shared/ipc'
 import type { WebContents } from 'electron'
 import type { IPty } from 'node-pty'
 import * as pty from 'node-pty'
+import { resolveShellSpec } from './shell-select'
 
 /**
  * PTY 会话管理（M0-1 原型）。
@@ -34,11 +34,6 @@ interface Session {
   bytesReceived: number
 }
 
-interface ShellSpec {
-  path: string
-  args: string[]
-}
-
 const MIN_DIMENSION = 2
 const MAX_DIMENSION = 1_000
 
@@ -57,26 +52,6 @@ function buildEnv(): Record<string, string> {
     if (typeof value === 'string') env[key] = value
   }
   return env
-}
-
-/**
- * 选择本机已存在的 Shell。
- * 设计稿 6.1：优先 PowerShell 或 cmd；Git Bash 等作为后续适配，不假定存在。
- */
-function resolveShell(): ShellSpec {
-  if (process.platform !== 'win32') {
-    return { path: process.env['SHELL'] ?? '/bin/bash', args: [] }
-  }
-
-  const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows'
-  const pwsh7 = join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe')
-  const windowsPowerShell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-
-  if (existsSync(pwsh7)) return { path: pwsh7, args: [] }
-  if (existsSync(windowsPowerShell)) return { path: windowsPowerShell, args: [] }
-
-  const comspec = process.env['COMSPEC'] ?? join(systemRoot, 'System32', 'cmd.exe')
-  return { path: comspec, args: [] }
 }
 
 export class PtySessionManager {
@@ -100,7 +75,7 @@ export class PtySessionManager {
       throw new Error(`启动目录不是文件夹：${cwd}`)
     }
 
-    const shell = resolveShell()
+    const shell = resolveShellSpec(request.shell)
     const cols = clampDimension(request.cols, 80)
     const rows = clampDimension(request.rows, 24)
 

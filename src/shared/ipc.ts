@@ -277,6 +277,8 @@ export interface TerminalCreateRequest {
   relativePath: string
   cols: number
   rows: number
+  /** 可选：指定 shell（pwsh／powershell／cmd）；缺省或未命中时按本机自动探测 */
+  shell?: string
 }
 
 export interface TerminalCreateResult {

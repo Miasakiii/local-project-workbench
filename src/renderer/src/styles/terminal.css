@@ -70,6 +70,21 @@
   background: rgba(255, 59, 48, 0.18);
 }
 
+.terminal-actions .terminal-shell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-actions .terminal-shell select {
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm, 6px);
+  color: #e5e5e7;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
 .terminal-notice {
   margin: 0;
   padding: 6px 12px;
