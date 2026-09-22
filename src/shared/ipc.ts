@@ -153,6 +153,8 @@ export interface StartupViewResult {
   projectId: string | null
   /** 开关已开启但未能恢复时的说明；其余情况为 null */
   notice: string | null
+  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b），供项目库设置区显示 */
+  editorPath: string | null
 }
 
 export interface UpdateSettingsRequest {

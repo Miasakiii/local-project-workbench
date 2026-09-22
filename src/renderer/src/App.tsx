@@ -47,6 +47,8 @@ export default function App(): React.JSX.Element {
 
   /** 「恢复上次项目」开关（应用级偏好，默认关闭，C09） */
   const [restoreLastProject, setRestoreLastProject] = useState(false)
+  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b） */
+  const [editorPath, setEditorPath] = useState<string | null>(null)
   /** 开关已开启但没能恢复时的说明；打开任一项目后消失 */
   const [startupNotice, setStartupNotice] = useState<string | null>(null)
   /** 启动位置只在首次加载时应用一次 */
@@ -126,6 +128,7 @@ export default function App(): React.JSX.Element {
 
     const view = await window.workbench.app.startupView()
     setRestoreLastProject(view.restoreLastProject)
+    setEditorPath(view.editorPath)
     const target = view.projectId
     if (target !== null && list.some((project) => project.id === target)) {
       await activateProject(target)
@@ -142,6 +145,12 @@ export default function App(): React.JSX.Element {
   const setRestoreLastProjectPreference = useCallback(async (enabled: boolean) => {
     const saved = await window.workbench.settings.update({ restoreLastProject: enabled })
     setRestoreLastProject(saved.restoreLastProject)
+  }, [])
+
+  /** 打开主进程编辑器选择器并持久化；返回的即最新 editorPath（取消为 null=未设置） */
+  const configureEditor = useCallback(async () => {
+    const path = await window.workbench.system.setEditor()
+    setEditorPath(path)
   }, [])
 
   const closeProject = useCallback(
@@ -239,6 +248,8 @@ export default function App(): React.JSX.Element {
               onRegister={register}
               registerBusy={registerBusy}
               onSetRestoreLastProject={(enabled) => void setRestoreLastProjectPreference(enabled)}
+              editorPath={editorPath}
+              onConfigureEditor={() => void configureEditor()}
             />
           ) : null}
 

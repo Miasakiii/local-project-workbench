@@ -8,6 +8,10 @@ interface LibraryPageProps {
   sidebarOpen: boolean
   /** 「恢复上次项目」开关（应用级偏好，C09） */
   restoreLastProject: boolean
+  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b） */
+  editorPath: string | null
+  /** 打开主进程编辑器选择器并持久化 */
+  onConfigureEditor: () => void
   onToggleSidebar: () => void
   /** 刷新项目列表；返回最新列表供调用方直接使用，本组件不消费其结果 */
   onRefresh: () => Promise<unknown>
@@ -33,6 +37,8 @@ export function LibraryPage({
   loading,
   sidebarOpen,
   restoreLastProject,
+  editorPath,
+  onConfigureEditor,
   onToggleSidebar,
   onRefresh,
   onOpenProject,
@@ -48,6 +54,8 @@ export function LibraryPage({
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [descriptionBusy, setDescriptionBusy] = useState(false)
   const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const editorLabel = editorPath === null ? '未设置' : (editorPath.split(/[\\/]/).pop() ?? editorPath)
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -184,6 +192,13 @@ export function LibraryPage({
             />
             <span>启动时恢复上次项目</span>
           </label>
+          <button
+            type="button"
+            onClick={() => onConfigureEditor()}
+            title="选择用于「用指定编辑器打开」的编辑器可执行文件（保存在应用设置中）"
+          >
+            编辑器：{editorLabel}
+          </button>
           <button type="button" onClick={() => void onRefresh()} disabled={loading}>
             刷新
           </button>

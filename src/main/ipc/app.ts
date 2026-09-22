@@ -39,7 +39,12 @@ export function registerAppIpc(ctx: IpcContext): void {
   ctx.handle(IpcChannel.appStartupView, (): StartupViewResult => {
     const settings = ctx.settings().get()
     const view = decideStartupView(settings, createStartupLookup(ctx.registry()))
-    return { restoreLastProject: settings.restoreLastProject, projectId: view.projectId, notice: view.notice }
+    return {
+      restoreLastProject: settings.restoreLastProject,
+      projectId: view.projectId,
+      notice: view.notice,
+      editorPath: settings.editorPath
+    }
   })
 
   ctx.handle(IpcChannel.settingsUpdate, (_event, request: UpdateSettingsRequest): SettingsResult => {
