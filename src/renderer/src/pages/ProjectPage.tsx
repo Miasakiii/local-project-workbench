@@ -1,4 +1,4 @@
-import type { ProjectPage as ProjectPageName, ProjectSummary, ProjectViewState } from '@shared/types'
+import type { GitSnapshot, ProjectPage as ProjectPageName, ProjectSummary, ProjectViewState } from '@shared/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChangesView } from '../components/ChangesView'
 import { FileBrowser } from '../components/FileBrowser'
@@ -87,6 +87,9 @@ export function ProjectPage({
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeTabKey, setActiveTabKey] = useState<number | null>(null)
   const tabKeyRef = useRef(1)
+  /** 头部 Git 状态（G6）：当前分支与变更文件数，只读查询 */
+  const [gitSnapshot, setGitSnapshot] = useState<GitSnapshot | null>(null)
+  const gitSequenceRef = useRef(0)
 
   const restoredRef = useRef(false)
   /** 拖拽起点的尺寸快照：拖拽过程中不能读 state，否则会累积误差 */
@@ -147,6 +150,36 @@ export function ProjectPage({
     })
     return off
   }, [project.id])
+
+  // 头部 Git 状态（G6）：项目头显示当前分支与变更文件数。只读查询，
+  // stale/error（无法判断）与「没有变化」严格区分，失败不计作 0 变更。
+  const refreshHeaderSnapshot = useCallback(async () => {
+    if (project.isGitRepository !== true) {
+      setGitSnapshot(null)
+      return
+    }
+    const sequence = ++gitSequenceRef.current
+    try {
+      const result = await window.workbench.git.snapshot({ projectId: project.id, sequence })
+      if (sequence !== gitSequenceRef.current) return
+      setGitSnapshot(result)
+    } catch {
+      // 头部态只作提示，具体错误由变更页呈现；这里保留上一个快照，不显示成 0 变更
+    }
+  }, [project.id, project.isGitRepository])
+
+  // 切换项目时重置并重查
+  useEffect(() => {
+    setGitSnapshot(null)
+    void refreshHeaderSnapshot()
+  }, [refreshHeaderSnapshot])
+
+  // 文件变化信号后刷新头部 Git 状态
+  useEffect(() => {
+    if (project.isGitRepository !== true) return
+    if (changeToken === 0) return
+    void refreshHeaderSnapshot()
+  }, [changeToken, refreshHeaderSnapshot, project.isGitRepository])
 
   const runningTabCount = tabs.filter((tab) => tab.sessionId !== null).length
   const terminalMounted = tabs.length > 0
@@ -292,6 +325,25 @@ export function ProjectPage({
           {project.isGitRepository === true ? <span className="chip chip-git">Git 仓库</span> : null}
           {project.isGitRepository === false ? <span className="chip">普通目录</span> : null}
           {project.isGitRepository === null ? <span className="chip chip-warn">Git 不可用</span> : null}
+          {project.isGitRepository === true && gitSnapshot !== null ? (
+            gitSnapshot.stale || gitSnapshot.error !== null ? (
+              <span className="chip chip-warn" title={gitSnapshot.error ?? 'Git 状态查询失败或已过期'}>
+                Git 状态不可用
+              </span>
+            ) : (
+              <>
+                <span
+                  className="chip"
+                  title={gitSnapshot.branch === null ? '尚无分支提交' : `当前分支：${gitSnapshot.branch}`}
+                >
+                  分支 {gitSnapshot.branch ?? '（无分支）'}
+                </span>
+                <span className="chip">
+                  变更 {new Set(gitSnapshot.entries.map((entry) => entry.relativePath)).size}
+                </span>
+              </>
+            )
+          ) : null}
           <button
             type="button"
             className={project.trusted ? 'chip chip-trusted' : 'chip'}
