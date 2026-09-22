@@ -65,12 +65,20 @@ async function withFake(
   url: string,
   allowNetworkImages = true,
   allowedImageHosts: string[] = [],
-  timeoutMs?: number
+  timeoutMs?: number,
+  resolvedHosts: string[] | Error = ['93.184.216.34']
 ) {
   /** 响应体是否真的被消费过——超限时应当一次都不读 */
   let read = false
   let cancelled = false
   const calls: string[] = []
+  const dnsCalls: string[] = []
+  /** 默认解析到一个公网 IP，使既有「已授权即放行」用例不因真实 DNS 而变化；传入 Error 可模拟解析失败 */
+  const dnsLookup = async (host: string): Promise<string[]> => {
+    dnsCalls.push(host)
+    if (resolvedHosts instanceof Error) throw resolvedHosts
+    return resolvedHosts
+  }
 
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     calls.push(String(input))
@@ -136,9 +144,12 @@ async function withFake(
     }
   }) as unknown as typeof fetch
 
-  const result = await readRemoteImage({ url, allowNetworkImages, allowedImageHosts }, { fetchImpl, timeoutMs })
+  const result = await readRemoteImage(
+    { url, allowNetworkImages, allowedImageHosts },
+    { fetchImpl, dnsLookup, timeoutMs }
+  )
   const outcome: FakeOutcome = { result, bodyRead: () => read, cancelled: () => cancelled }
-  return { ...outcome, calls }
+  return { ...outcome, calls, dnsCalls }
 }
 
 function chunk(size: number, seed: number): Uint8Array {
@@ -474,6 +485,68 @@ async function main(): Promise<void> {
     }
     check('只有 ok 分支携带 data URL（其余一律为 null）', onlyOkCarriesDataUrl, '八条分支逐一核对')
     check('返回给界面的图片地址只可能是 data: 方案', allDataUrlsAreDataScheme, '不存在 http(s) 直连地址')
+  }
+
+  /* ---------- 七、域名解析到内网（R10 加固） ---------- */
+  {
+    const toLoopback = await withFake(PUBLIC_PNG, 'https://evil.example/x.png', true, [], undefined, ['127.0.0.1'])
+    check(
+      '域名解析到回环地址：拦下且不发请求',
+      toLoopback.result.status === 'forbidden-host' && toLoopback.calls.length === 0,
+      `status=${toLoopback.result.status} 请求数=${toLoopback.calls.length}`
+    )
+
+    const toMeta = await withFake(PUBLIC_PNG, 'https://evil.example/x.png', true, [], undefined, ['169.254.169.254'])
+    check(
+      '域名解析到链路本地/云元数据：拦下',
+      toMeta.result.status === 'forbidden-host' && toMeta.calls.length === 0,
+      `status=${toMeta.result.status}`
+    )
+
+    const toV6 = await withFake(PUBLIC_PNG, 'https://evil.example/x.png', true, [], undefined, ['::1'])
+    check(
+      '域名解析到 IPv6 回环：拦下',
+      toV6.result.status === 'forbidden-host' && toV6.calls.length === 0,
+      `status=${toV6.result.status}`
+    )
+
+    const mixed = await withFake(PUBLIC_PNG, 'https://evil.example/x.png', true, [], undefined, [
+      '93.184.216.34',
+      '10.0.0.5'
+    ])
+    check(
+      '多个解析结果里有一个落在内网即拦下',
+      mixed.result.status === 'forbidden-host' && mixed.calls.length === 0,
+      `status=${mixed.result.status}`
+    )
+
+    const publicResolve = await withFake(PUBLIC_PNG, 'https://img.example/x.png', true, [], undefined, [
+      '93.184.216.34'
+    ])
+    check('解析到公网地址时正常放行', publicResolve.result.status === 'ok', String(publicResolve.result.status))
+
+    const resolveFail = await withFake(
+      PUBLIC_PNG,
+      'https://nx.example/x.png',
+      true,
+      [],
+      undefined,
+      new Error('getaddrinfo ENOTFOUND nx.example')
+    )
+    check(
+      '域名解析失败归为不可达且不外发，保留原因',
+      resolveFail.result.status === 'unreachable' &&
+        resolveFail.calls.length === 0 &&
+        (resolveFail.result.message ?? '').includes('ENOTFOUND'),
+      `status=${resolveFail.result.status} 消息=${String(resolveFail.result.message)}`
+    )
+
+    const ipLiteral = await withFake(PUBLIC_PNG, 'http://203.0.113.7/a.png', true, [], undefined, ['127.0.0.1'])
+    check(
+      '公网 IP 字面量不触发 DNS 解析',
+      ipLiteral.result.status === 'ok' && ipLiteral.dnsCalls.length === 0,
+      `status=${ipLiteral.result.status} dnsCalls=${ipLiteral.dnsCalls.length}`
+    )
   }
 
   /* ---------- 输出 ---------- */

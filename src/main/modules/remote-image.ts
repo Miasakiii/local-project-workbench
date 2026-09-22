@@ -1,3 +1,4 @@
+import { lookup as dnsLookupNative } from 'node:dns/promises'
 import type { RemoteAssetResult } from '@shared/types'
 
 /**
@@ -57,6 +58,8 @@ export interface RemoteImageRequest {
 export interface RemoteImageDeps {
   /** 注入网络能力，使协议、域名、类型、体积与超时判定可在纯 Node 断言 */
   fetchImpl?: typeof fetch
+  /** 注入域名解析；生产用 node:dns，验证脚本注入以模拟各类解析结果 */
+  dnsLookup?: (host: string) => Promise<string[]>
   /** 覆盖超时（毫秒），仅验证脚本使用；生产走 `REMOTE_IMAGE_TIMEOUT_MS` */
   timeoutMs?: number
 }
@@ -95,7 +98,7 @@ function isIpLiteral(host: string): boolean {
  *
  * README 里的图片地址是不可信输入，放任它回环请求会把「阅读文档」变成一次内网探测
  * （`127.0.0.1` 上的服务、`169.254.169.254` 的实例元数据）。这里只拦**字面量**形式；
- * 经 DNS 解析到内网的公网域名不在本页能力内，作为已知限制如实记录，不假装已经防住。
+ * 域名的解析结果由 `classifyResolvedHost` 在连接前复核一层（见 R10）。
  */
 function isPrivateHost(host: string): boolean {
   if (host.length === 0) return true
@@ -118,6 +121,48 @@ function isPrivateHost(host: string): boolean {
 
   // 其余 IPv6 私有形态已按前缀处理；含冒号却识别不了的一律按不可信对待
   return isIpLiteral(host)
+}
+
+/** 生产域名解析器：解析为全部 A/AAAA 地址。验证脚本经 `deps.dnsLookup` 注入替代。 */
+const defaultDnsLookup: NonNullable<RemoteImageDeps['dnsLookup']> = async (host: string): Promise<string[]> => {
+  const records = await dnsLookupNative(host, { all: true })
+  return records.map((record) => record.address)
+}
+
+/**
+ * 域名连接前再解析一次，挡住「公网域名经 DNS 解析到内网」（R10 最常见形态）。
+ *
+ * 只解析域名：IP 字面量的私网判定已由 `isPrivateHost` 完成，无需也不应再解析。
+ * 任一解析结果落在本机/内网即拒绝；解析失败按不可达处理并说明原因——此时真正抓取
+ * 也会失败，因此不给含糊的「加载失败」。
+ *
+ * 残余风险如实保留：解析与建立连接之间域名可能被换成内网 IP（DNS 重新绑定竞态），
+ * 要闭合它需在拿到 IP 后固定用该 IP 建连，超出本页职责，记为 R10，不假装已防住。
+ */
+async function classifyResolvedHost(
+  host: string,
+  resolveIps: NonNullable<RemoteImageDeps['dnsLookup']>
+): Promise<
+  { status: 'ok' } | { status: 'forbidden-host'; message: string } | { status: 'unreachable'; message: string }
+> {
+  if (isIpLiteral(host)) return { status: 'ok' }
+
+  let resolved: string[]
+  try {
+    resolved = await resolveIps(host)
+  } catch (error) {
+    return {
+      status: 'unreachable',
+      message: `无法解析域名 ${host}：${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+
+  for (const ip of resolved) {
+    if (isPrivateHost(ip)) {
+      return { status: 'forbidden-host', message: `该地址的域名 ${host} 解析到本机或内网（${ip}），不加载。` }
+    }
+  }
+  return { status: 'ok' }
 }
 
 /** 从 Content-Type 取出 MIME 主体（忽略 `; charset=` 等参数）。 */
@@ -200,6 +245,7 @@ export async function readRemoteImage(
     return { ...result, status: 'not-authorized', message: `域名 ${host} 不在授权列表内。` }
   }
 
+  const resolveIps = deps.dnsLookup ?? defaultDnsLookup
   const fetchImpl = deps.fetchImpl ?? fetch
   const controller = new AbortController()
   const timeoutMs = deps.timeoutMs ?? REMOTE_IMAGE_TIMEOUT_MS
@@ -207,6 +253,13 @@ export async function readRemoteImage(
   const timer = setTimeout(() => controller.abort(new Error(`请求超过 ${timeoutMs} ms`)), timeoutMs)
 
   try {
+    // 域名在连接前先解析一次：解析到本机/内网的公网域名一律拦下。这挡的是「公网域名常驻
+    // 解析到内网」这一最常见形态；解析与建连之间的重新绑定竞态仍列为 R10 残余风险。
+    const resolvedHost = await classifyResolvedHost(host, resolveIps)
+    if (resolvedHost.status !== 'ok') {
+      return { ...result, status: resolvedHost.status, message: resolvedHost.message }
+    }
+
     const response = await fetchImpl(target, {
       redirect: 'follow',
       signal: controller.signal,
