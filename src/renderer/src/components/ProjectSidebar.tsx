@@ -79,6 +79,7 @@ export function ProjectSidebar({
           <input
             type="search"
             placeholder="筛选项目"
+            aria-label="筛选项目"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             tabIndex={open ? 0 : -1}

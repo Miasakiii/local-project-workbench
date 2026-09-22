@@ -183,6 +183,7 @@ export function LibraryPage({
             type="search"
             className="search"
             placeholder="按名称、路径或简介搜索"
+            aria-label="按名称、路径或简介搜索"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />

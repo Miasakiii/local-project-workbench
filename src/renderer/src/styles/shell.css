@@ -54,6 +54,10 @@
   box-shadow: none;
 }
 
+.project-badges button.chip:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 /* ---------- 应用骨架：侧边栏 + 主区域 ---------- */
 
 .app-body {
@@ -334,6 +338,10 @@
   transition:
     background 140ms var(--ease),
     color 140ms var(--ease);
+}
+
+.segmented button:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .segmented button:hover:not(:disabled) {

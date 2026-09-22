@@ -692,6 +692,18 @@ function runChild() {
       grantedViewSeen && !afterGrant.blocked.includes('网络资源'),
       afterGrant.blocked
     )
+    // a11y：内容区为 tabpanel，且当前分段控件 tab 通过 aria-controls 指向它
+    const tabpanelLinked = await evaluate(`(() => {
+      const main = document.querySelector('.project-content')
+      const selected = document.querySelector('.segmented [role="tab"][aria-selected="true"]')
+      return (
+        !!main &&
+        main.getAttribute('role') === 'tabpanel' &&
+        !!selected &&
+        selected.getAttribute('aria-controls') === main.id
+      )
+    })()`)
+    record('内容区为 tabpanel 且与分段控件关联', tabpanelLinked === true, `tabpanel 关联=${String(tabpanelLinked)}`)
     const grantedDoc = await evaluate(
       `window.workbench.file.preview({ projectId: ${JSON.stringify(projectId)}, relativePath: 'README.md' })`
     )

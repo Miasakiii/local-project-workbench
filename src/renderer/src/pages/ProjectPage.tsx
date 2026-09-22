@@ -315,7 +315,9 @@ export function ProjectPage({
               type="button"
               key={item.key}
               role="tab"
+              id={`seg-tab-${item.key}`}
               aria-selected={page === item.key}
+              aria-controls="page-panel"
               className={page === item.key ? 'active' : undefined}
               onClick={() => setPage(item.key)}
               title={item.hint}
@@ -372,7 +374,13 @@ export function ProjectPage({
 
       {!project.available ? <p className="inline-error">{project.unavailableReason ?? '项目目录当前不可用'}</p> : null}
 
-      <main className="project-content" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+      <main
+        className="project-content"
+        role="tabpanel"
+        id="page-panel"
+        aria-labelledby={`seg-tab-${page}`}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
         {page === 'overview' ? (
           <OverviewView
             projectId={project.id}

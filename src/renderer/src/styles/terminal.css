@@ -58,6 +58,11 @@
   box-shadow: none;
 }
 
+/* 深色面板上的焦点环需要更高对比 */
+.terminal-actions button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.6);
+}
+
 .terminal-actions button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.16);
 }
@@ -83,6 +88,11 @@
   color: #e5e5e7;
   font-size: 12px;
   padding: 3px 6px;
+}
+
+.terminal-actions .terminal-shell select:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 1px;
 }
 
 .terminal-notice {
