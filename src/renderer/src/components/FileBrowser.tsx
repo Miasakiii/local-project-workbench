@@ -132,6 +132,8 @@ export function FileBrowser({
   const [operationBusy, setOperationBusy] = useState(false)
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null)
   const [operationNotice, setOperationNotice] = useState<OperationNotice | null>(null)
+  /** 键盘树导航的「焦点光标」；null 表示尚未进入树，此时首个可见行可被 Tab 聚焦 */
+  const [cursorPath, setCursorPath] = useState<string | null>(null)
 
   const generationRef = useRef(0)
   const selectedPathsRef = useRef<Set<string>>(new Set())
@@ -144,6 +146,8 @@ export function FileBrowser({
   /** 预览容器：用于在重载前后保持滚动位置 */
   const previewHostRef = useRef<HTMLDivElement>(null)
   const previewScrollRef = useRef(0)
+  /** 键盘树导航：每个 treeitem 的 DOM 引用，按相对路径索引 */
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   /** 加载一个目录并返回结果，便于调用方在同一流程内继续处理 */
   const loadDirectory = useCallback(
@@ -211,6 +215,7 @@ export function FileBrowser({
     setSelectedPath(null)
     setSelectedEntry(null)
     setPreview(null)
+    setCursorPath(null)
     appliedRef.current = null
     void loadDirectory('')
   }, [loadDirectory])
@@ -237,6 +242,7 @@ export function FileBrowser({
       selectedEntryRef.current = entry
       setSelectedPath(entry.relativePath)
       setSelectedEntry(entry)
+      setCursorPath(entry.relativePath)
       if (entry.kind === 'file') openPreview(entry)
       return entry
     },
@@ -261,6 +267,7 @@ export function FileBrowser({
     selectedEntryRef.current = null
     setPreview(null)
     previewScrollRef.current = 0
+    setCursorPath(null)
     onPathChange('')
   }, [onPathChange])
 
@@ -540,6 +547,7 @@ export function FileBrowser({
       selectedEntryRef.current = entry
       setSelectedPath(entry.relativePath)
       setSelectedEntry(entry)
+      setCursorPath(entry.relativePath)
       appliedRef.current = entry.relativePath
       onPathChange(entry.relativePath)
       if (entry.kind === 'file') openPreview(entry)
@@ -599,6 +607,103 @@ export function FileBrowser({
     walk('', 0)
     return output
   }, [dirs, expanded])
+
+  /* ---------- 键盘树导航（ARIA tree：漫游 tabindex + 方向键） ---------- */
+
+  /** 可见的条目行（去掉提示行），顺序即视觉顺序，供 ↑/↓/Home/End 遍历 */
+  const focusableRows = useMemo(
+    () => rows.filter((row): row is Extract<Row, { kind: 'entry' }> => row.kind === 'entry'),
+    [rows]
+  )
+
+  const handleTreeKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const list = focusableRows
+      if (list.length === 0) return
+      const currentIndex = cursorPath === null ? -1 : list.findIndex((row) => row.entry.relativePath === cursorPath)
+
+      const focusRow = (index: number): void => {
+        const row = list[Math.max(0, Math.min(index, list.length - 1))]
+        if (row === undefined) return
+        setCursorPath(row.entry.relativePath)
+        selectEntry(row.entry, false)
+        rowRefs.current.get(row.entry.relativePath)?.focus()
+      }
+
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault()
+          focusRow(currentIndex + 1)
+          break
+        case 'ArrowUp':
+          event.preventDefault()
+          focusRow(currentIndex - 1)
+          break
+        case 'Home':
+          event.preventDefault()
+          focusRow(0)
+          break
+        case 'End':
+          event.preventDefault()
+          focusRow(list.length - 1)
+          break
+        case 'ArrowRight': {
+          if (cursorPath === null) {
+            event.preventDefault()
+            focusRow(0)
+            return
+          }
+          const entry = list[currentIndex]?.entry
+          if (entry === undefined) return
+          event.preventDefault()
+          if (entry.kind === 'directory' && !expanded.has(entry.relativePath)) {
+            toggleDirectory(entry.relativePath) // 展开；子项按需异步加载，先保持焦点在本行
+          } else if (entry.kind === 'directory') {
+            focusRow(currentIndex + 1) // 已展开 → 移到第一个子项
+          }
+          break
+        }
+        case 'ArrowLeft': {
+          if (cursorPath === null) return
+          const entry = list[currentIndex]?.entry
+          if (entry === undefined) return
+          event.preventDefault()
+          if (entry.kind === 'directory' && expanded.has(entry.relativePath)) {
+            toggleDirectory(entry.relativePath) // 已展开 → 先收起
+            return
+          }
+          // 文件或已收起的目录 → 跳到父目录
+          const parent = parentDirectoryOf(entry.relativePath)
+          const parentIndex = list.findIndex((row) => row.entry.relativePath === parent)
+          if (parentIndex >= 0) {
+            setCursorPath(parent)
+            const parentEntry = list[parentIndex]?.entry
+            if (parentEntry !== undefined) selectEntry(parentEntry, false)
+            rowRefs.current.get(parent)?.focus()
+          }
+          break
+        }
+        case 'Enter':
+        case ' ': {
+          if (cursorPath === null) {
+            event.preventDefault()
+            focusRow(0)
+            return
+          }
+          const entry = list[currentIndex]?.entry
+          if (entry === undefined) return
+          event.preventDefault()
+          selectEntry(entry, false)
+          if (entry.kind === 'directory') toggleDirectory(entry.relativePath)
+          else openPreview(entry)
+          break
+        }
+        default:
+          break
+      }
+    },
+    [cursorPath, focusableRows, selectEntry, toggleDirectory, expanded, openPreview]
+  )
 
   /* ---------- 面包屑：定位到当前选中项 ---------- */
 
@@ -772,7 +877,13 @@ export function FileBrowser({
       ) : null}
 
       <div className="browser-split" ref={splitRef}>
-        <div className="file-tree" role="tree" style={{ width: paneWidth }}>
+        <div
+          className="file-tree"
+          role="tree"
+          aria-multiselectable="true"
+          onKeyDown={handleTreeKeyDown}
+          style={{ width: paneWidth }}
+        >
           <div className="tree-head">
             <span className="col-name">名称</span>
             <span className="col-size">大小</span>
@@ -798,14 +909,21 @@ export function FileBrowser({
             const isSelected = selectedPaths.has(entry.relativePath)
 
             return (
-              // biome-ignore lint/a11y/useFocusableInteractive: 文件树行由整行点击驱动；键盘树导航（方向键）属 M3 交互专项，届时统一补 tabIndex 与完整 role 语义
               <div
                 key={entry.relativePath}
+                ref={(element) => {
+                  if (element) rowRefs.current.set(entry.relativePath, element)
+                  else rowRefs.current.delete(entry.relativePath)
+                }}
                 className={isSelected ? 'tree-row selected' : 'tree-row'}
                 style={{ paddingLeft: 4 + row.depth * 16 }}
                 role="treeitem"
+                aria-level={row.depth + 1}
+                aria-selected={isSelected}
                 aria-expanded={entry.kind === 'directory' ? isExpanded : undefined}
+                tabIndex={(cursorPath ?? focusableRows[0]?.entry.relativePath) === entry.relativePath ? 0 : -1}
                 title={tooltipFor(entry)}
+                onFocus={() => setCursorPath(entry.relativePath)}
               >
                 {entry.kind === 'directory' ? (
                   <button
@@ -825,7 +943,12 @@ export function FileBrowser({
                   <span className="twisty placeholder" />
                 )}
 
-                <button type="button" className="tree-label" onClick={(event) => handleRowClick(event, entry)}>
+                <button
+                  type="button"
+                  className="tree-label"
+                  tabIndex={-1}
+                  onClick={(event) => handleRowClick(event, entry)}
+                >
                   {entry.kind === 'directory' ? <FolderIcon className="glyph" /> : <FileIcon className="glyph" />}
                   <span className="name">
                     {entry.name}

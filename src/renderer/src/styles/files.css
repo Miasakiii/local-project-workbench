@@ -214,6 +214,11 @@ body.is-resizing-x * {
   background: var(--accent-soft-hover);
 }
 
+/* 键盘树导航焦点态：与选中态区分，避免 focused 行与 selected 行混淆 */
+.tree-row:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 .twisty {
   flex: none;
   width: 18px;

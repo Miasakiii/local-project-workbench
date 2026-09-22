@@ -161,6 +161,36 @@ h3 {
   cursor: default;
 }
 
+/* 可关闭的错误提示条：文本 + 独立关闭按钮，键盘可达（聚焦后回车/空格即关闭） */
+.banner-dismissible {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.banner-dismiss {
+  flex: none;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.banner-dismiss:hover {
+  background: rgba(215, 0, 21, 0.12);
+}
+
+.banner-dismiss:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 /* ---------- 标签 ---------- */
 
 .chip {

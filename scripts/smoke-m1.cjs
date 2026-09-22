@@ -1245,6 +1245,41 @@ function runChild() {
       JSON.stringify(tooltips.sample)
     )
 
+    // 键盘可达性（P0-3）：roving tabindex —— 恰一个 treeitem 可被 Tab 进入；
+    // 聚焦首行后按 ↓ 把焦点与选中移到下一行。分步等待 React 提交后再断言。
+    const treeTabbable = await evaluate(`(() => {
+      const items = [...document.querySelectorAll('[role="treeitem"]')]
+      return { total: items.length, tabbable: items.filter((el) => el.getAttribute('tabindex') === '0').length }
+    })()`)
+    await evaluate(`(() => { const first = document.querySelector('[role="treeitem"]'); if (first) first.focus() })()`)
+    await sleep(80)
+    await evaluate(`(() => {
+      const active = document.activeElement
+      if (active && active.getAttribute('role') === 'treeitem') {
+        active.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+      }
+    })()`)
+    await sleep(120)
+    const keyboardTree = await evaluate(`(() => {
+      const items = [...document.querySelectorAll('[role="treeitem"]')]
+      const active = document.activeElement
+      return {
+        total: items.length,
+        activeIndex: items.indexOf(active),
+        selected: active === null ? null : active.getAttribute('aria-selected'),
+        tabbable: items.filter((el) => el.getAttribute('tabindex') === '0').length
+      }
+    })()`)
+    record(
+      '方向键可在文件树中移动焦点与选中',
+      treeTabbable.total >= 2 &&
+        treeTabbable.tabbable === 1 &&
+        keyboardTree.activeIndex === 1 &&
+        keyboardTree.selected === 'true' &&
+        keyboardTree.tabbable === 1,
+      JSON.stringify({ before: treeTabbable, after: keyboardTree })
+    )
+
     // 点击文件夹整行（不是箭头）即可展开
     const rowClicked = await evaluate(`(() => {
       const label = document.querySelector('.tree-row .tree-label')

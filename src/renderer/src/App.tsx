@@ -204,10 +204,12 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       {fatalError !== null ? (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: 提示条点击即关闭。改为可聚焦控件会引入新的焦点态，而当前环境无法人工确认视觉效果（见 P4）；键盘可达性与文件树导航一并在 M3 交互专项处理
-        <p className="inline-error banner" onClick={() => setFatalError(null)}>
-          {fatalError}（点击关闭）
-        </p>
+        <div className="inline-error banner banner-dismissible" role="alert">
+          <span className="banner-text">{fatalError}</span>
+          <button type="button" className="banner-dismiss" onClick={() => setFatalError(null)} aria-label="关闭提示">
+            ×
+          </button>
+        </div>
       ) : null}
 
       {startupNotice !== null ? <p className="inline-notice banner">{startupNotice}</p> : null}
