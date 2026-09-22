@@ -6,6 +6,7 @@ import { SidebarIcon } from '../components/icons'
 import { OverviewView } from '../components/OverviewView'
 import { ResizeHandle } from '../components/ResizeHandle'
 import { TerminalView } from '../components/TerminalView'
+import { useModalFocus } from '../hooks/useModalFocus'
 
 interface ProjectPageProps {
   project: ProjectSummary
@@ -77,6 +78,7 @@ export function ProjectPage({
   const [panelHeight, setPanelHeight] = useState(DEFAULT_PANEL_HEIGHT)
   const [filesPaneWidth, setFilesPaneWidth] = useState(DEFAULT_PANE_WIDTH)
   const [trustPrompt, setTrustPrompt] = useState(false)
+  const { dialogRef: trustDialogRef } = useModalFocus(trustPrompt, () => setTrustPrompt(false))
   const [restored, setRestored] = useState(false)
   /** 文件变化信号带来的刷新令牌：递增即触发文件树与变更页重新读取 */
   const [changeToken, setChangeToken] = useState(0)
@@ -530,9 +532,9 @@ export function ProjectPage({
       ) : null}
 
       {trustPrompt ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
-            <h2>信任「{project.displayName}」？</h2>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="trust-project-title">
+          <div className="modal" ref={trustDialogRef}>
+            <h2 id="trust-project-title">信任「{project.displayName}」？</h2>
             <p>终端具备当前用户的系统权限，可以读写该项目之外的任何位置。请只对你自己控制的目录开启。</p>
             <p className="hint">信任后：可在项目内创建终端、删除文件（发送到系统回收站）。不信任时项目为只读浏览。</p>
             <div className="modal-actions">

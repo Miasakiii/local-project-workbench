@@ -1,6 +1,7 @@
 import type { AppInfo, ProjectSummary } from '@shared/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ProjectSidebar } from './components/ProjectSidebar'
+import { useModalFocus } from './hooks/useModalFocus'
 import { LibraryPage } from './pages/LibraryPage'
 import { ProjectPage } from './pages/ProjectPage'
 
@@ -49,6 +50,10 @@ export default function App(): React.JSX.Element {
   const [restoreLastProject, setRestoreLastProject] = useState(false)
   /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b） */
   const [editorPath, setEditorPath] = useState<string | null>(null)
+  const { dialogRef: closeDialogRef } = useModalFocus(pendingCloseProjectId !== null, () =>
+    setPendingCloseProjectId(null)
+  )
+  const { dialogRef: quitDialogRef } = useModalFocus(pendingQuit !== null, () => setPendingQuit(null))
   /** 开关已开启但没能恢复时的说明；打开任一项目后消失 */
   const [startupNotice, setStartupNotice] = useState<string | null>(null)
   /** 启动位置只在首次加载时应用一次 */
@@ -282,9 +287,9 @@ export default function App(): React.JSX.Element {
       </div>
 
       {pendingCloseProjectId !== null ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
-            <h2>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="close-sessions-title">
+          <div className="modal" ref={closeDialogRef}>
+            <h2 id="close-sessions-title">
               「{projects.find((item) => item.id === pendingCloseProjectId)?.displayName ?? '该项目'}
               」的终端会话正在运行
             </h2>
@@ -310,9 +315,9 @@ export default function App(): React.JSX.Element {
       ) : null}
 
       {pendingQuit !== null ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
-            <h2>还有 {pendingQuit} 个终端会话正在运行</h2>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="quit-sessions-title">
+          <div className="modal" ref={quitDialogRef}>
+            <h2 id="quit-sessions-title">还有 {pendingQuit} 个终端会话正在运行</h2>
             <p>退出应用会结束这些会话，正在其中运行的命令会被中断。</p>
             <p className="hint">不承诺恢复原来的进程；下次启动后需要重新执行命令。</p>
             <div className="modal-actions">

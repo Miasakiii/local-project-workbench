@@ -1737,6 +1737,13 @@ function runChild() {
       (quitModal.actions ?? []).join(' / ')
     )
 
+    // a11y：useModalFocus 打开时把焦点移入框内（只读断言，不发起按键以免扰动退出序列）
+    const quitFocusInDialog = await waitFor(
+      `(() => { const m = document.querySelector('.modal-backdrop .modal'); return !!m && m.contains(document.activeElement) })()`,
+      3000
+    )
+    record('退出确认框打开即聚焦框内', quitFocusInDialog === true, `焦点在框内=${String(quitFocusInDialog)}`)
+
     await evaluate(`(() => {
       const button = [...document.querySelectorAll('.modal-backdrop .modal button')]
         .find((item) => item.textContent.trim() === '取消')

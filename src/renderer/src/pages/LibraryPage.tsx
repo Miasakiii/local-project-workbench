@@ -1,6 +1,7 @@
 import type { ProjectSummary } from '@shared/types'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { SidebarIcon } from '../components/icons'
+import { useModalFocus } from '../hooks/useModalFocus'
 
 interface LibraryPageProps {
   projects: ProjectSummary[]
@@ -57,6 +58,12 @@ export function LibraryPage({
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [descriptionBusy, setDescriptionBusy] = useState(false)
   const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const { dialogRef: removeDialogRef } = useModalFocus(pendingRemoval !== null, () => setPendingRemoval(null))
+  const { dialogRef: editDialogRef } = useModalFocus(
+    editingDescription !== null,
+    () => setEditingDescription(null),
+    descriptionInputRef
+  )
 
   const editorLabel = editorPath === null ? '未设置' : (editorPath.split(/[\\/]/).pop() ?? editorPath)
 
@@ -148,11 +155,6 @@ export function LibraryPage({
       setDescriptionBusy(false)
     }
   }, [editingDescription, onRefresh])
-
-  // 打开弹窗时聚焦输入框（可访问性：显式 focus，而非 autoFocus 属性）
-  useEffect(() => {
-    if (editingDescription !== null) descriptionInputRef.current?.focus()
-  }, [editingDescription])
 
   return (
     <div className="library-page">
@@ -337,9 +339,9 @@ export function LibraryPage({
       </div>
 
       {pendingRemoval !== null ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
-            <h2>移除「{pendingRemoval.displayName}」的登记？</h2>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="remove-project-title">
+          <div className="modal" ref={removeDialogRef}>
+            <h2 id="remove-project-title">移除「{pendingRemoval.displayName}」的登记？</h2>
             <p>
               这只会删除应用中的记录。<strong>磁盘上的文件不会被删除、移动或修改。</strong>
             </p>
@@ -357,9 +359,9 @@ export function LibraryPage({
       ) : null}
 
       {editingDescription !== null ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
-            <h2>编辑「{editingDescription.displayName}」的简介</h2>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-description-title">
+          <div className="modal" ref={editDialogRef}>
+            <h2 id="edit-description-title">编辑「{editingDescription.displayName}」的简介</h2>
             <label className="field">
               <span>简介</span>
               <textarea
