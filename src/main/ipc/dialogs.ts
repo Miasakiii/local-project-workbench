@@ -38,6 +38,27 @@ export function pickRelocateDirectory(event: IpcMainInvokeEvent): Promise<string
   return pickDirectory(event, RELOCATE_DIALOG)
 }
 
+/**
+ * 选择编辑器可执行文件（用于 G3b「用指定编辑器打开」）。
+ * 只返回用户选择的路径（取消返回 null）；是否使用、如何启动由调用方决定。
+ */
+export async function pickEditorExecutable(event: IpcMainInvokeEvent): Promise<string | null> {
+  const filters =
+    process.platform === 'win32'
+      ? [{ name: '可执行文件', extensions: ['exe', 'bat', 'cmd'] }]
+      : [{ name: '可执行文件', extensions: ['*'] }]
+  const owner = BrowserWindow.fromWebContents(event.sender)
+  const result = owner
+    ? await dialog.showOpenDialog(owner, {
+        title: '选择编辑器可执行文件',
+        properties: ['openFile'],
+        filters
+      })
+    : await dialog.showOpenDialog({ title: '选择编辑器可执行文件', properties: ['openFile'], filters })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0] ?? null
+}
+
 /** 登记子目录位于仓库内时的选择：用所选目录 / 改用仓库根 / 取消 */
 export type RepoRootChoice = 'chosen' | 'root' | 'cancelled'
 

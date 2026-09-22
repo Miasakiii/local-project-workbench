@@ -194,6 +194,13 @@ const api = {
     openPath: (request: OpenPathRequest): Promise<string | null> =>
       ipcRenderer.invoke(IpcChannel.systemOpenPath, request),
 
+    /** 用「设置编辑器…」里选择的编辑器打开项目内文件；未设置或启动失败时返回可读原因 */
+    openWith: (request: OpenPathRequest): Promise<string | null> =>
+      ipcRenderer.invoke(IpcChannel.systemOpenWith, request),
+
+    /** 选择并保存用于打开文件的编辑器（主进程选 exe，持久化到 settings.json）；取消返回 null */
+    setEditor: (): Promise<string | null> => ipcRenderer.invoke(IpcChannel.systemSetEditor),
+
     showInFolder: (request: OpenPathRequest): Promise<boolean> =>
       ipcRenderer.invoke(IpcChannel.systemShowInFolder, request)
   },

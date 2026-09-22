@@ -751,6 +751,28 @@ export function FileBrowser({
     await window.workbench.system.showInFolder({ projectId, relativePath: selectedEntry.relativePath })
   }, [projectId, selectedEntry])
 
+  /** 用指定编辑器打开（G3b）；编辑器未设置或启动失败时以可读原因反馈 */
+  const openWithEditor = useCallback(async () => {
+    if (selectedEntry === null) return
+    const error = await window.workbench.system.openWith({ projectId, relativePath: selectedEntry.relativePath })
+    if (error === null) {
+      setOperationNotice({ tone: 'success', title: '已用指定编辑器打开', details: [selectedEntry.relativePath] })
+    } else {
+      setOperationNotice({ tone: 'error', title: '打开失败', details: [error] })
+    }
+  }, [projectId, selectedEntry])
+
+  /** 选择/更换用于「用指定编辑器打开」的编辑器（主进程选 exe，持久化到应用设置） */
+  const chooseEditor = useCallback(async () => {
+    const chosen = await window.workbench.system.setEditor()
+    if (chosen === null) {
+      setOperationNotice({ tone: 'error', title: '未设置编辑器', details: ['已取消选择'] })
+      return
+    }
+    const name = chosen.split(/[\\/]/).pop() ?? chosen
+    setOperationNotice({ tone: 'success', title: `已设置编辑器：${name}`, details: [chosen] })
+  }, [])
+
   /** 复制所选条目相对路径到系统剪贴板（G3）。相对路径不离开本项目，无需主进程。 */
   const copyPaths = useCallback(async () => {
     const paths =
@@ -889,6 +911,21 @@ export function FileBrowser({
             disabled={selectedEntry === null || selectedCount !== 1}
           >
             用默认程序打开
+          </button>
+          <button
+            type="button"
+            onClick={() => void openWithEditor()}
+            disabled={selectedEntry === null || selectedCount !== 1}
+            title="用「设置编辑器…」里选择的编辑器打开该文件"
+          >
+            用指定编辑器打开
+          </button>
+          <button
+            type="button"
+            onClick={() => void chooseEditor()}
+            title="选择用于「用指定编辑器打开」的编辑器可执行文件（保存在应用设置中）"
+          >
+            设置编辑器…
           </button>
           <button
             type="button"

@@ -4,9 +4,10 @@ import { JsonStore } from '../storage/json-store'
 /**
  * 应用级偏好（C09 / 验收场景 10「恢复上次项目」）。
  *
- * 只承载两件事，且都写在应用数据目录：
+ * 承载三件事，且都写在应用数据目录：
  * - `restoreLastProject`：开关，**默认关闭**；
- * - `lastProjectId`：上次活跃于哪个项目，由主进程在用户打开项目时记录。
+ * - `lastProjectId`：上次活跃于哪个项目，由主进程在用户打开项目时记录；
+ * - `editorPath`：「用指定编辑器打开」所用的编辑器可执行路径（设计稿 4.2，G3b）。
  *
  * 刻意与 `projects.json` 分开存放：开关是应用属性，不是项目属性。移除登记、
  * 重新定位都不该改动它——能否恢复由启动那一刻的实际情况决定，见 `decideStartupView`。
@@ -21,9 +22,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function sanitizeSettings(raw: unknown): SettingsResult | null {
   if (!isRecord(raw)) return null
   const last = raw['lastProjectId']
+  const editor = raw['editorPath']
   return {
     restoreLastProject: raw['restoreLastProject'] === true,
-    lastProjectId: typeof last === 'string' && last.length > 0 ? last : null
+    lastProjectId: typeof last === 'string' && last.length > 0 ? last : null,
+    editorPath: typeof editor === 'string' && editor.length > 0 ? editor : null
   }
 }
 
@@ -48,6 +51,16 @@ export class AppSettingsStore {
 
   setRestoreLastProject(enabled: boolean): SettingsResult {
     const next: SettingsResult = { ...this.get(), restoreLastProject: enabled === true }
+    this.store.write(next)
+    return next
+  }
+
+  /** 「用指定编辑器打开」所用的编辑器路径；null 或空串表示清空（回到未设置）。 */
+  setEditorPath(path: string | null): SettingsResult {
+    const next: SettingsResult = {
+      ...this.get(),
+      editorPath: typeof path === 'string' && path.length > 0 ? path : null
+    }
     this.store.write(next)
     return next
   }
@@ -127,7 +140,7 @@ export function createSettingsStore(filePath: string): AppSettingsStore {
       filePath,
       version: STORE_VERSION,
       sanitize: sanitizeSettings,
-      createDefault: () => ({ restoreLastProject: false, lastProjectId: null })
+      createDefault: () => ({ restoreLastProject: false, lastProjectId: null, editorPath: null })
     })
   )
 }

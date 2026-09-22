@@ -68,6 +68,8 @@ export const IpcChannel = {
   systemOpenExternal: 'system:open-external',
   systemOpenPath: 'system:open-path',
   systemShowInFolder: 'system:show-in-folder',
+  systemOpenWith: 'system:open-with',
+  systemSetEditor: 'system:set-editor',
 
   terminalCreate: 'terminal:create',
   terminalWrite: 'terminal:write',
@@ -166,6 +168,8 @@ export interface SettingsResult {
   restoreLastProject: boolean
   /** 上次活跃的项目 ID；从未打开过为 null */
   lastProjectId: string | null
+  /** 「用指定编辑器打开」所用的编辑器可执行路径；null=尚未设置（设计稿 4.2，G3b） */
+  editorPath: string | null
 }
 
 /* ---------- 视图状态 ---------- */
