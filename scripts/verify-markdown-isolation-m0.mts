@@ -165,10 +165,26 @@ function run(): void {
   check('默认策略下无外部图片资源', doc.remoteAssets.length === 0, `remoteAssets=${doc.remoteAssets.length}`)
   // 键盘可达（a11y）：外链/项目内链接输出 tabindex + role=link，但**不引入可加载 href**
   const hrefAttrs = html.match(/href="[^"]*"/g) ?? []
-  check('输出 href 仅限站内锚点', hrefAttrs.every((value) => value.startsWith('href="#')), hrefAttrs.join(' '))
-  check('外链/项目内链接可键盘聚焦 tabindex="0"', (html.match(/tabindex="0"/g) ?? []).length >= 2, `tabindex×${(html.match(/tabindex="0"/g) ?? []).length}`)
-  check('外链/项目内链接带 role=link', (html.match(/role="link"/g) ?? []).length >= 2, `role=link×${(html.match(/role="link"/g) ?? []).length}`)
-  check('外链经 data-external-url 承载且无 href', html.includes('data-external-url="https://example.com/') && !html.includes('href="https://example.com/'), '已确认')
+  check(
+    '输出 href 仅限站内锚点',
+    hrefAttrs.every((value) => value.startsWith('href="#')),
+    hrefAttrs.join(' ')
+  )
+  check(
+    '外链/项目内链接可键盘聚焦 tabindex="0"',
+    (html.match(/tabindex="0"/g) ?? []).length >= 2,
+    `tabindex×${(html.match(/tabindex="0"/g) ?? []).length}`
+  )
+  check(
+    '外链/项目内链接带 role=link',
+    (html.match(/role="link"/g) ?? []).length >= 2,
+    `role=link×${(html.match(/role="link"/g) ?? []).length}`
+  )
+  check(
+    '外链经 data-external-url 承载且无 href',
+    html.includes('data-external-url="https://example.com/') && !html.includes('href="https://example.com/'),
+    '已确认'
+  )
 
   /* ---------- 三、恶意样例逐项阻止 ---------- */
 
