@@ -144,23 +144,34 @@ export function MarkdownPreview({
     }
   }, [projectId, markdown])
 
-  const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
-    const target = event.target as HTMLElement | null
-    if (target === null) return
-
+  /** 由事件目标向上找可激活链接；命中即执行并返回 true（外链交系统浏览器，项目内链接应用内跳转）。 */
+  const activateLink = (target: HTMLElement): boolean => {
     const external = target.closest('[data-external-url]')
     if (external !== null) {
-      event.preventDefault()
-      const url = external.getAttribute('data-external-url') ?? ''
-      void window.workbench.system.openExternal({ url })
-      return
+      void window.workbench.system.openExternal({ url: external.getAttribute('data-external-url') ?? '' })
+      return true
     }
-
     const projectLink = target.closest('[data-project-path]')
     if (projectLink !== null) {
-      event.preventDefault()
       onNavigateProjectPath(projectLink.getAttribute('data-project-path') ?? '')
+      return true
     }
+    return false
+  }
+
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const target = event.target as HTMLElement | null
+    if (target !== null && activateLink(target)) event.preventDefault()
+  }
+
+  // 净化层把外链/项目内链接输出为 <a role="link" tabindex="0">（无 href，浏览器不会为其合成 click）；
+  // 键盘 Enter/Space 在此委托处理，走与点击完全相同的激活路径。
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return
+    const target = event.target as HTMLElement | null
+    if (target === null || target.closest('[data-external-url], [data-project-path]') === null) return
+    event.preventDefault()
+    activateLink(target)
   }
 
   const allNotices: BlockedNotice[] = markdown.blocked
@@ -219,12 +230,12 @@ export function MarkdownPreview({
         </div>
       ) : null}
 
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: 本容器是链接委托宿主，真正的可交互元素是其内部的 <a>（由净化层产出） */}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: 容器不承载交互语义，键盘操作由内部 <a> 承担 */}
       <div
         className="markdown-body"
         ref={hostRef}
+        role="document"
         onClick={handleClick}
+        onKeyDown={handleKeyDown}
         // biome-ignore lint/security/noDangerouslySetInnerHtml: 内容由主进程净化层产出并自审（markdown-sanitize），净化层永不写出 src/href 原始值
         dangerouslySetInnerHTML={{ __html: markdown.html }}
       />

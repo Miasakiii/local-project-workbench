@@ -148,7 +148,7 @@ const ACTIVE_TAGS = new Set([
 
 /** 每个标签允许的属性。未列出的属性（含所有 `on*` 与 `style`）一律丢弃。 */
 const TAG_ATTRIBUTES: Record<string, Set<string>> = {
-  a: new Set(['href', 'title']),
+  a: new Set(['href', 'title', 'tabindex', 'role']),
   img: new Set(['src', 'alt', 'title', 'width', 'height']),
   p: new Set(['align']),
   div: new Set(['align']),
@@ -270,13 +270,22 @@ function sanitizeRawHtml(raw: string, ctx: RenderContext): string {
           if (decision.kind === 'external') {
             // 外链不写入 href：渲染进程通过 data-external-url 交给系统浏览器。
             // 这样「输出中不存在可加载 URL 属性」成为可断言的不变量。
-            attributes.push(`data-external-url="${escapeAttribute(decision.href)}"`, 'data-external="true"')
+            attributes.push(
+              `data-external-url="${escapeAttribute(decision.href)}"`,
+              'data-external="true"',
+              'tabindex="0"',
+              'role="link"'
+            )
             ctx.externalLinkCount += 1
           } else if (decision.kind === 'anchor') {
             attributes.push(`href="${escapeAttribute(decision.href)}"`)
           } else if (decision.kind === 'project') {
             ctx.projectLinks.add(decision.relativePath)
-            attributes.push(`data-project-path="${escapeAttribute(decision.relativePath)}"`)
+            attributes.push(
+              `data-project-path="${escapeAttribute(decision.relativePath)}"`,
+              'tabindex="0"',
+              'role="link"'
+            )
           } else {
             ctx.blocked.push({ kind: 'link', target: value, reason: decision.reason })
           }
@@ -365,12 +374,12 @@ function renderInlineNodes(nodes: InlineNode[], ctx: RenderContext): string {
         const decision = ctx.policy.resolveLink(node.href)
         if (decision.kind === 'external') {
           ctx.externalLinkCount += 1
-          output += `<a data-external-url="${escapeAttribute(decision.href)}" data-external="true">${inner}</a>`
+          output += `<a data-external-url="${escapeAttribute(decision.href)}" data-external="true" tabindex="0" role="link">${inner}</a>`
         } else if (decision.kind === 'anchor') {
           output += `<a href="${escapeAttribute(decision.href)}">${inner}</a>`
         } else if (decision.kind === 'project') {
           ctx.projectLinks.add(decision.relativePath)
-          output += `<a data-project-path="${escapeAttribute(decision.relativePath)}" class="md-project-link">${inner}</a>`
+          output += `<a data-project-path="${escapeAttribute(decision.relativePath)}" class="md-project-link" tabindex="0" role="link">${inner}</a>`
         } else {
           ctx.blocked.push({ kind: 'link', target: node.href, reason: decision.reason })
           output += `<span class="md-blocked" data-blocked="link">${inner}</span>`

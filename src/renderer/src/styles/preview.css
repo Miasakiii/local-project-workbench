@@ -277,6 +277,13 @@
   text-decoration: underline;
 }
 
+.markdown-body .md-project-link:focus-visible,
+.markdown-body a[data-external-url]:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-xs, 3px);
+}
+
 .blocked-panel {
   margin: 12px 0;
   padding: 9px 12px;

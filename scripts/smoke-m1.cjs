@@ -1678,6 +1678,25 @@ function runChild() {
           String(relocatedCard?.notice).includes('重新确认'),
         `徽章=${(relocatedCard?.badges ?? []).join(' / ')} 提示=${String(relocatedCard?.notice).slice(0, 40)}`
       )
+      // a11y：提示条改为「可聚焦关闭按钮」，键盘用户可定位并激活它
+      const noticeDismissible = await (async () => {
+        const focusable = await evaluate(`(() => {
+          const notice = document.querySelector('.inline-notice.banner-dismissible')
+          const button = notice === null ? null : notice.querySelector('.banner-dismiss')
+          if (!(button instanceof HTMLElement)) return false
+          button.focus()
+          return document.activeElement === button
+        })()`)
+        if (focusable !== true) return false
+        await evaluate(`document.querySelector('.inline-notice.banner-dismissible .banner-dismiss')?.click()`)
+        const remaining = await evaluate(`document.querySelectorAll('.inline-notice.banner-dismissible').length`)
+        return remaining === 0
+      })()
+      record(
+        '提示条可键盘关闭（关闭按钮可聚焦并生效）',
+        noticeDismissible === true,
+        `可聚焦并关闭 → ${String(noticeDismissible)}`
+      )
       record(
         '重新定位不移动磁盘内容',
         fs.existsSync(path.join(secondDir, 'README.md')) && fs.existsSync(path.join(relocatedDir, 'README.md')),

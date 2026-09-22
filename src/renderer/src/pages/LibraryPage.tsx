@@ -222,10 +222,12 @@ export function LibraryPage({
       </header>
 
       {notice !== null ? (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: 提示条点击即关闭。改为可聚焦控件会引入新的焦点态，而当前环境无法人工确认视觉效果（见 P4）；键盘可达性一并在 M3 交互专项处理
-        <p className="inline-notice" onClick={() => setNotice(null)}>
-          {notice}
-        </p>
+        <div className="inline-notice banner-dismissible" role="alert">
+          <span className="banner-text">{notice}</span>
+          <button type="button" className="banner-dismiss" onClick={() => setNotice(null)} aria-label="关闭提示">
+            ×
+          </button>
+        </div>
       ) : null}
 
       {projects.length === 0 && !loading ? (
