@@ -6,7 +6,11 @@ import { app, BrowserWindow, shell } from 'electron'
 import { createHandle, type IpcContext, registerIpcHandlers } from './ipc'
 import { type AppSettingsStore, createSettingsStore } from './modules/app-settings'
 import { ProjectWatcher } from './modules/file-watcher'
-import { detectReadme, extractSummary } from './modules/markdown-preview'
+import {
+  type DescriptionResult,
+  type DescriptionSource,
+  resolveDescription as resolveProjectDescription
+} from './modules/project-description'
 import { createRegistry, createRegistryStore, type ProjectRegistry, toSummary } from './modules/project-registry'
 import { PtySessionManager } from './modules/pty-session'
 import { createQuitCoordinator } from './modules/quit-coordinator'
@@ -38,7 +42,7 @@ let registry: ProjectRegistry | null = null
 let settings: AppSettingsStore | null = null
 
 /** 简介缓存：键为项目 ID，值为上次提取所用签名与结果 */
-const descriptionCache = new Map<string, { signature: string; text: string | null; source: 'readme' | 'path' }>()
+const descriptionCache = new Map<string, { signature: string; text: string | null; source: DescriptionSource }>()
 
 function getRegistry(): ProjectRegistry {
   if (registry === null) {
@@ -63,27 +67,29 @@ function resolveProjectRoot(projectId: string): string {
   return resolved.root
 }
 
-function resolveDescription(project: Project): { text: string | null; source: 'user' | 'readme' | 'path' } {
-  if (project.descriptionOverride !== null && project.descriptionOverride.trim().length > 0) {
-    return { text: project.descriptionOverride.trim(), source: 'user' }
+/**
+ * 项目库列表使用的简介解析。三级优先的生产实现已抽到
+ * `modules/project-description.ts`（纯函数，可被纯 Node 断言覆盖）；
+ * 这里只在上层加一层运行时缓存——缓存是应用态，不属于纯函数。
+ *
+ * 缓存键用「身份 + 介绍文件」而非探测结果：探测对这两个输入是确定函数，
+ * 二者不变则结果不变；这样缓存命中时无需重复做一次目录探测。
+ */
+function resolveDescription(project: Project): DescriptionResult {
+  const override = project.descriptionOverride
+  if (override !== null && override.trim().length > 0) {
+    return { text: override.trim(), source: 'user' }
   }
 
-  const detection = detectReadme(project.normalizedIdentity, project.readmePath)
-  const signature = `${detection.selected ?? ''}`
+  const signature = `${project.normalizedIdentity}\u0000${project.readmePath ?? ''}`
   const cached = descriptionCache.get(project.id)
   if (cached !== undefined && cached.signature === signature) {
     return { text: cached.text, source: cached.source }
   }
 
-  let text: string | null = null
-  if (detection.selected !== null) {
-    text = extractSummary(project.normalizedIdentity, detection.selected)
-  }
-  const source: 'readme' | 'path' = text === null ? 'path' : 'readme'
-  if (text === null) text = project.normalizedIdentity
-
-  descriptionCache.set(project.id, { signature, text, source })
-  return { text, source }
+  const result = resolveProjectDescription(project)
+  descriptionCache.set(project.id, { signature, text: result.text, source: result.source })
+  return result
 }
 
 function listProjects(): ProjectSummary[] {

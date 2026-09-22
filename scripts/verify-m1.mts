@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { highlightCode } from '../src/main/modules/code-highlight.ts'
 import { listDirectory, previewFile } from '../src/main/modules/file-browser.ts'
 import { detectReadme, renderMarkdownFile } from '../src/main/modules/markdown-preview.ts'
+import { resolveDescription } from '../src/main/modules/project-description.ts'
 import { createRegistry, createRegistryStore, toSummary } from '../src/main/modules/project-registry.ts'
 
 const keepFixture = process.argv.includes('--keep')
@@ -109,27 +110,6 @@ function main(): void {
 
   const storePath = join(appDataDir, 'projects.json')
   const registry = createRegistry(createRegistryStore(storePath))
-  const describe = (project: {
-    normalizedIdentity: string
-    descriptionOverride: string | null
-    readmePath: string | null
-  }): {
-    text: string | null
-    source: 'user' | 'readme' | 'path'
-  } => {
-    if (project.descriptionOverride !== null) return { text: project.descriptionOverride, source: 'user' }
-    const detection = detectReadme(project.normalizedIdentity, project.readmePath)
-    if (detection.selected === null) return { text: project.normalizedIdentity, source: 'path' }
-    const document = renderMarkdownFile({
-      projectId: 'probe',
-      projectRoot: project.normalizedIdentity,
-      relativePath: detection.selected
-    })
-    const firstParagraph = document.html.match(/<p>([\s\S]*?)<\/p>/)
-    if (firstParagraph === null) return { text: project.normalizedIdentity, source: 'path' }
-    const text = (firstParagraph[1] as string).replace(/<[^>]*>/g, '').trim()
-    return text.length > 0 ? { text, source: 'readme' } : { text: project.normalizedIdentity, source: 'path' }
-  }
 
   /* ---------- 验收场景 1：登记、去重、重启保留、移除不删磁盘 ---------- */
 
@@ -195,7 +175,7 @@ function main(): void {
   const reAdded = afterRemove.register(projectDir)
   const summaries = afterRemove
     .list()
-    .map((project) => toSummary(project, describe))
+    .map((project) => toSummary(project, resolveDescription))
     .sort((left, right) => {
       if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
       return right.lastOpenedAt.localeCompare(left.lastOpenedAt)
@@ -312,7 +292,7 @@ function main(): void {
 
   const grantedSummary = afterRemove
     .list()
-    .map((project) => toSummary(project, describe))
+    .map((project) => toSummary(project, resolveDescription))
     .find((project) => project.id === remoteId)
   check(
     '项目摘要带出授权状态供界面渲染开关',
@@ -330,7 +310,7 @@ function main(): void {
 
   const revokedSummary = afterRemove
     .list()
-    .map((project) => toSummary(project, describe))
+    .map((project) => toSummary(project, resolveDescription))
     .find((project) => project.id === remoteId)
   check(
     '撤销后摘要立即回到关闭',
@@ -420,7 +400,7 @@ function main(): void {
   rmSync(unavailableDir, { recursive: true, force: true })
   const unavailableSummary = afterRemove
     .list()
-    .map((project) => toSummary(project, describe))
+    .map((project) => toSummary(project, resolveDescription))
     .find((project) => project.id === temp.project?.id)
   check(
     '目录消失后标记为不可用并给出原因',
