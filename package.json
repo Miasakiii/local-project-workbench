@@ -30,6 +30,7 @@
     "verify:m1": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m1.mts",
     "smoke:m1": "node scripts/smoke-m1.cjs",
     "measure:m0-7": "node scripts/measure-framework-m0.cjs 5 --sizes",
+    "measure:g9": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/measure-g9-scale.mts",
     "verify:m0": "npm run verify:m0-4 && npm run verify:m0-5 && npm run verify:m0-5:trash && npm run verify:m0-6",
     "verify:all": "npm run lint && npm run typecheck && npm run build && npm run verify:m0 && npm run verify:m1 && npm run verify:m2 && npm run verify:m3 && npm run verify:remote-image && npm run verify:g5-shell && npm run smoke:m1",
     "verify:m2-diff": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m2-diff.mts",
