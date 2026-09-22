@@ -101,6 +101,26 @@ function operationReport(result: FileOperationBatchResult, action: string): Oper
   }
 }
 
+/** 兼容回退：无 navigator.clipboard 的安全上下文时用 execCommand 复制 */
+function legacyCopy(text: string): boolean {
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } catch {
+    ok = false
+  } finally {
+    document.body.removeChild(area)
+  }
+  return ok
+}
+
 /**
  * 文件树与只读预览（设计稿 4.2，M1-4）。
  *
@@ -731,6 +751,29 @@ export function FileBrowser({
     await window.workbench.system.showInFolder({ projectId, relativePath: selectedEntry.relativePath })
   }, [projectId, selectedEntry])
 
+  /** 复制所选条目相对路径到系统剪贴板（G3）。相对路径不离开本项目，无需主进程。 */
+  const copyPaths = useCallback(async () => {
+    const paths =
+      selectedCount === 1 && selectedEntry !== null ? [selectedEntry.relativePath] : [...selectedPathsRef.current]
+    if (paths.length === 0) return
+    const text = paths.join('\n')
+    const done = (): void =>
+      setOperationNotice({ tone: 'success', title: `已复制 ${paths.length} 个路径`, details: paths })
+    try {
+      if (navigator.clipboard?.writeText !== undefined) {
+        await navigator.clipboard.writeText(text)
+        done()
+      } else if (legacyCopy(text)) {
+        done()
+      } else {
+        setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
+      }
+    } catch {
+      if (legacyCopy(text)) done()
+      else setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
+    }
+  }, [selectedCount, selectedEntry])
+
   const terminalDirectory = selectedEntry?.kind === 'directory' ? selectedEntry.relativePath : ''
 
   /** 拖拽分栏时限制范围：右侧预览区始终保留可用宽度 */
@@ -853,6 +896,14 @@ export function FileBrowser({
             disabled={selectedEntry === null || selectedCount !== 1}
           >
             在资源管理器中定位
+          </button>
+          <button
+            type="button"
+            onClick={() => void copyPaths()}
+            disabled={selectedCount === 0}
+            title={selectedCount <= 1 ? '复制该条目相对路径' : `复制所选 ${selectedCount} 个条目相对路径`}
+          >
+            复制路径{selectedCount > 1 ? `（${selectedCount}）` : ''}
           </button>
           <button type="button" onClick={() => onOpenTerminalAt(terminalDirectory)}>
             在此目录新建终端
