@@ -220,3 +220,33 @@
   gap: 8px;
   margin-top: 20px;
 }
+
+.modal .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 2px;
+}
+
+.modal .field > span {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.modal textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-field);
+  color: inherit;
+}
+
+.modal textarea:focus {
+  background: var(--bg-field-focus);
+  border-color: var(--accent);
+}

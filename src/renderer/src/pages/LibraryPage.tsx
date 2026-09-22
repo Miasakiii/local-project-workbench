@@ -1,5 +1,5 @@
 import type { ProjectSummary } from '@shared/types'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SidebarIcon } from '../components/icons'
 
 interface LibraryPageProps {
@@ -23,8 +23,8 @@ interface LibraryPageProps {
  * 规则：
  * - 默认启动页即本页；「恢复上次项目」为可选开关（C09），默认关闭。
  *   开关只改变启动时去哪里，不改变本页的任何其它行为。
- * - 卡片简介优先用户填写，其次 README 首段，最后回退路径。主进程与 `project:update`
- *   已支持 `descriptionOverride`，本页本版**未提供填写入口**，实际来源只有后两种。
+ * - 卡片简介支持用户填写（`descriptionOverride`），其次 README 首段，最后回退路径。
+ *   卡片「编辑简介」可填写自定义简介，清空保存即恢复自动提取（`project:update` 已支持）。
  * - 目录不可用时卡片明确标注，仍可移除登记或重新定位。
  * - 移除登记**不删除磁盘文件**，确认框里明确说明。
  */
@@ -44,6 +44,10 @@ export function LibraryPage({
   const [pendingRemoval, setPendingRemoval] = useState<ProjectSummary | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [relocatingId, setRelocatingId] = useState<string | null>(null)
+  const [editingDescription, setEditingDescription] = useState<ProjectSummary | null>(null)
+  const [descriptionDraft, setDescriptionDraft] = useState('')
+  const [descriptionBusy, setDescriptionBusy] = useState(false)
+  const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null)
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -90,6 +94,54 @@ export function LibraryPage({
     },
     [onRefresh]
   )
+
+  /** 打开简介编辑：已有用户覆盖以其为初值，否则从空开始（清空=恢复自动的直观入口）。 */
+  const openDescriptionEditor = useCallback((project: ProjectSummary) => {
+    setDescriptionDraft(project.descriptionSource === 'user' ? (project.description ?? '') : '')
+    setEditingDescription(project)
+  }, [])
+
+  /** 保存简介：trim 后为空 = 恢复自动提取，与主进程 descriptionOverride=null 语义一致。 */
+  const saveDescription = useCallback(async () => {
+    if (editingDescription === null) return
+    setDescriptionBusy(true)
+    try {
+      const trimmed = descriptionDraft.trim()
+      await window.workbench.project.update({
+        projectId: editingDescription.id,
+        descriptionOverride: trimmed.length === 0 ? null : trimmed
+      })
+      setEditingDescription(null)
+      await onRefresh()
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDescriptionBusy(false)
+    }
+  }, [editingDescription, descriptionDraft, onRefresh])
+
+  /** 一键恢复自动提取。 */
+  const restoreDescription = useCallback(async () => {
+    if (editingDescription === null) return
+    setDescriptionBusy(true)
+    try {
+      await window.workbench.project.update({
+        projectId: editingDescription.id,
+        descriptionOverride: null
+      })
+      setEditingDescription(null)
+      await onRefresh()
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDescriptionBusy(false)
+    }
+  }, [editingDescription, onRefresh])
+
+  // 打开弹窗时聚焦输入框（可访问性：显式 focus，而非 autoFocus 属性）
+  useEffect(() => {
+    if (editingDescription !== null) descriptionInputRef.current?.focus()
+  }, [editingDescription])
 
   return (
     <div className="library-page">
@@ -195,6 +247,7 @@ export function LibraryPage({
               {project.description ?? '暂无简介'}
               {project.descriptionSource === 'readme' ? <span className="hint">（取自 README）</span> : null}
               {project.descriptionSource === 'path' ? <span className="hint">（未提取到简介，显示路径）</span> : null}
+              {project.descriptionSource === 'user' ? <span className="hint">（自定义）</span> : null}
             </p>
 
             {!project.available ? (
@@ -213,6 +266,13 @@ export function LibraryPage({
                   disabled={!project.available}
                 >
                   打开
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openDescriptionEditor(project)}
+                  title="填写或修改卡片简介；清空保存即恢复自动提取"
+                >
+                  编辑简介
                 </button>
                 <button type="button" onClick={() => void togglePinned(project)}>
                   {project.pinned ? '取消置顶' : '置顶'}
@@ -260,6 +320,49 @@ export function LibraryPage({
               </button>
               <button type="button" className="danger" onClick={() => void confirmRemoval()}>
                 仅移除登记
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingDescription !== null ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal">
+            <h2>编辑「{editingDescription.displayName}」的简介</h2>
+            <label className="field">
+              <span>简介</span>
+              <textarea
+                value={descriptionDraft}
+                onChange={(event) => setDescriptionDraft(event.target.value)}
+                ref={descriptionInputRef}
+                rows={3}
+                maxLength={200}
+                placeholder="显示在项目卡片上；清空保存即恢复自动提取"
+              />
+            </label>
+            <p className="hint">优先展示你填写的内容；清空并保存则恢复自动提取（README 首段，取不到时显示路径）。</p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setEditingDescription(null)} disabled={descriptionBusy}>
+                取消
+              </button>
+              {editingDescription.descriptionSource === 'user' ? (
+                <button
+                  type="button"
+                  onClick={() => void restoreDescription()}
+                  disabled={descriptionBusy}
+                  title="恢复为自动提取（README 首段或路径）"
+                >
+                  恢复自动
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void saveDescription()}
+                disabled={descriptionBusy}
+              >
+                {descriptionBusy ? '保存中…' : '保存'}
               </button>
             </div>
           </div>
