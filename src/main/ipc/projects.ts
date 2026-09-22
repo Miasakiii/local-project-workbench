@@ -12,11 +12,12 @@ import type {
 import { IpcChannel } from '@shared/ipc'
 import type { ProjectViewState, ReadmeDetection } from '@shared/types'
 import { shell } from 'electron'
-import { detectRepository } from '../modules/git-query'
+import { detectRepository, detectRepositoryRoot } from '../modules/git-query'
 import { detectReadme } from '../modules/markdown-preview'
 import { toSummary } from '../modules/project-registry'
+import { isSameLocation } from '../security/path-guard'
 import type { IpcContext } from './context'
-import { pickDirectory, pickRelocateDirectory } from './dialogs'
+import { confirmUseRepoRoot, pickDirectory, pickRelocateDirectory } from './dialogs'
 
 /** 项目登记、元数据与视图状态。 */
 export function registerProjectIpc(ctx: IpcContext): void {
@@ -28,7 +29,19 @@ export function registerProjectIpc(ctx: IpcContext): void {
       return { status: 'cancelled', project: null, message: null }
     }
 
-    const outcome = ctx.registry().register(directory)
+    // G4：所选目录位于某 Git 仓库内、且不是仓库根本身时，询问是否改用仓库根。
+    // 绝对路径只在主进程流转，不回传渲染层；默认仍用所选目录，不擅自扩大范围。
+    let target = directory
+    const repoRoot = await detectRepositoryRoot(directory)
+    if (repoRoot !== null && !isSameLocation(directory, repoRoot)) {
+      const choice = await confirmUseRepoRoot(event, directory, repoRoot)
+      if (choice === 'cancelled') {
+        return { status: 'cancelled', project: null, message: null }
+      }
+      if (choice === 'root') target = repoRoot
+    }
+
+    const outcome = ctx.registry().register(target)
 
     if (outcome.project === null) {
       return { status: 'unavailable', project: null, message: outcome.message }

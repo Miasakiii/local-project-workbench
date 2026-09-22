@@ -101,6 +101,17 @@ export async function detectRepository(cwd: string): Promise<boolean | null> {
   return result.stdout.toString('utf8').trim() === 'true'
 }
 
+/**
+ * 取目录所在 Git 仓库的工作区根（`rev-parse --show-toplevel`）。
+ * 非仓库或查询失败返回 null。仅用于「登记子目录时提示可改用仓库根」（G4），不影响登记本身。
+ */
+export async function detectRepositoryRoot(cwd: string): Promise<string | null> {
+  const result = await runGit(cwd, ['rev-parse', '--show-toplevel'])
+  if (!result.ok) return null
+  const top = result.stdout.toString('utf8').trim()
+  return top.length > 0 ? top : null
+}
+
 /** 只读查询分支与状态 */
 export async function queryGitStatus(projectId: string, cwd: string, sequence: number): Promise<GitSnapshot> {
   const result = await runGit(cwd, ['status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z'])

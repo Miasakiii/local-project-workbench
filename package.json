@@ -26,7 +26,7 @@
     "verify:m0-4": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-markdown-isolation-m0.mts",
     "verify:m0-5": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-file-ops-m0.mts",
     "verify:m0-5:trash": "node scripts/verify-trash-real-m0.cjs",
-    "verify:m0-6": "node --experimental-transform-types scripts/verify-git-parse-m0.mts && node --experimental-transform-types scripts/verify-git-repo-m0.mts",
+    "verify:m0-6": "node --experimental-transform-types scripts/verify-git-parse-m0.mts && node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-git-repo-m0.mts",
     "verify:m1": "node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m1.mts",
     "smoke:m1": "node scripts/smoke-m1.cjs",
     "measure:m0-7": "node scripts/measure-framework-m0.cjs 5 --sizes",

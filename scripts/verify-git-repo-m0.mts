@@ -3,14 +3,15 @@
  *
  * 在临时仓库中制造各类变更，验证 porcelain v2 解析在实际 Git 输出上正确。
  *
- * 用法：node --experimental-strip-types scripts/verify-git-repo-m0.mts
+ * 用法：node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-git-repo-m0.mts
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { countByGroup, parsePorcelainV2 } from '../src/main/modules/git-parse.ts'
+import { detectRepositoryRoot } from '../src/main/modules/git-query.ts'
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', ['--no-optional-locks', ...args], {
@@ -88,6 +89,28 @@ try {
   ])
 } finally {
   rmSync(empty, { recursive: true, force: true })
+}
+
+// G4：仓库根解析（登记子目录时提示可改用仓库根）
+{
+  const repoRoot = mkdtempSync(join(tmpdir(), 'lpw-git-root-'))
+  const nonRepo = mkdtempSync(join(tmpdir(), 'lpw-git-nonrepo-'))
+  try {
+    git(repoRoot, ['init', '-q', '-b', 'main'])
+    const subdir = join(repoRoot, 'sub', 'deep')
+    mkdirSync(subdir, { recursive: true })
+    const norm = (value: string): string => realpathSync(value).replace(/\\/g, '/').toLowerCase()
+    const fromSub = await detectRepositoryRoot(subdir)
+    checks.push([
+      '仓库根解析（子目录→仓库根）',
+      fromSub !== null && norm(fromSub) === norm(repoRoot),
+      `root=${String(fromSub)} expect=${repoRoot}`
+    ])
+    checks.push(['非仓库目录→null', (await detectRepositoryRoot(nonRepo)) === null, `nonRepo=${nonRepo}`])
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true })
+    rmSync(nonRepo, { recursive: true, force: true })
+  }
 }
 
 console.log('=== M0-6 验证（二）：真实仓库集成 ===\n')
