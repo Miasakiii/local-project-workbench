@@ -1,15 +1,16 @@
 /**
- * G1 验证：网络图片的按项目授权与主进程代理抓取（设计稿 4.3）。
+ * G1 验证：网络图片的按项目授权与主进程代理抓取（设计稿 4.3、R10）。
  *
  * 覆盖：
  *   - 授权门：未授权一律拒绝，且**不发出任何请求**；域名白名单为空/命中/未命中
  *   - 地址形态：非 http(s)、协议相对写法、盘符、带用户名密码、无法解析
- *   - 私网字面量：回环、链路本地、RFC1918、CGNAT、ULA、.local/.internal
- *   - 响应复核：状态码、Content-Type 白名单（SVG 明确拒绝）、类型归一、体积上限、空响应
- *   - 重定向复核：跳到内网/非 http/未授权域名一律拦下，且不返回任何可加载内容
+ *   - 私网字面量与域名解析：回环、链路本地、RFC1918、CGNAT、ULA、.local/.internal；解析到内网一律拦下
+ *   - 响应复核：状态码、Content-Type 白名单（SVG 明确拒绝）、类型归一、体积上限、空响应、魔数嗅探
+ *   - 重定向：手动逐跳；跳到内网/非 http/未授权域名一律拦下并**不再次连接**；跳授权域名内其它主机放行；超上限停止
+ *   - 重绑定闭合（R10）：连接用的 IP 即已校验的那个公网 IP（不出现第二次独立解析）
  *   - 不变量：除 `ok` 以外所有分支的 dataUrl 必须为 null；`ok` 时只可能是 data: 前缀
  *
- * 网络经 `deps.fetchImpl` 注入，不发真实请求、不依赖显示会话。
+ * 网络经 `deps.requestImpl` 注入（生产为 node:http(s) 固定 IP 实现），不发真实请求、不依赖显示会话。
  *
  * 用法：
  *   node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-remote-image.mts
@@ -28,27 +29,30 @@ function check(name: string, pass: boolean, detail: string): void {
   checks.push({ name, pass, detail })
 }
 
-/* ---------- 假响应 ---------- */
+/* ---------- 假响应（按请求顺序逐跳脚本化） ---------- */
 
 interface FakeScript {
   status?: number
-  ok?: boolean
-  /** 响应头；Content-Type 与 Content-Length 按此读取 */
+  /** 响应头；Content-Type、Content-Length、Location 均按此读取 */
   headers?: Record<string, string>
-  /** 重定向后的最终地址（fetch 会跟随重定向，response.url 即最终地址） */
-  url?: string
-  /** 响应体字节。给了 chunks 就走 ReadableStream，否则走 arrayBuffer */
+  /** 响应体字节（单段） */
   body?: Uint8Array
   /** 分块给出，用于验证流式读取途中的上限拦截 */
   chunks?: Uint8Array[]
   /** 模拟网络异常 */
-  throwOnFetch?: Error
+  throwOnRequest?: Error
   /** 挂起直到 signal 中止，用于验证超时确实生效 */
   hangUntilAbort?: boolean
 }
 
 interface FakeOutcome {
   result: Awaited<ReturnType<typeof readRemoteImage>>
+  /** 每次请求的 URL（含重定向后的后续跳） */
+  calls: string[]
+  /** 每次请求被固定的连接 IP——证明连接用的是已校验 IP，而非第二次独立解析 */
+  ips: string[]
+  /** 域名解析调用记录 */
+  dnsCalls: string[]
   /** 是否真的读取了响应体（用于断言超限时不下载整张图） */
   bodyRead: () => boolean
   /** 流式超限时是否取消了读取 */
@@ -60,96 +64,86 @@ function pngBytes(): Uint8Array {
   return new Uint8Array(Array.from({ length: 64 }, (_unused, index) => (index * 7) % 251))
 }
 
+function textBytes(text: string): Uint8Array {
+  return new TextEncoder().encode(text)
+}
+
 async function withFake(
-  script: FakeScript,
+  scriptOrScripts: FakeScript | FakeScript[],
   url: string,
   allowNetworkImages = true,
   allowedImageHosts: string[] = [],
   timeoutMs?: number,
   resolvedHosts: string[] | Error = ['93.184.216.34']
-) {
-  /** 响应体是否真的被消费过——超限时应当一次都不读 */
+): Promise<FakeOutcome> {
+  const scripts = Array.isArray(scriptOrScripts) ? scriptOrScripts : [scriptOrScripts]
   let read = false
   let cancelled = false
   const calls: string[] = []
+  const ips: string[] = []
   const dnsCalls: string[] = []
-  /** 默认解析到一个公网 IP，使既有「已授权即放行」用例不因真实 DNS 而变化；传入 Error 可模拟解析失败 */
   const dnsLookup = async (host: string): Promise<string[]> => {
     dnsCalls.push(host)
     if (resolvedHosts instanceof Error) throw resolvedHosts
     return resolvedHosts
   }
 
-  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
-    calls.push(String(input))
-    if (script.throwOnFetch !== undefined) throw script.throwOnFetch
-
-    if (script.hangUntilAbort === true) {
-      const signal = init?.signal
-      throw await new Promise((_resolve, reject) => {
-        const rejectWithAbort = (): void => reject(signal?.reason ?? new Error('请求被中止'))
-        if (signal?.aborted === true) {
-          rejectWithAbort()
-          return
+  const buildBody = (script: FakeScript): ReadableStream<Uint8Array> => {
+    const pieces = script.chunks ?? (script.body !== undefined ? [script.body] : [pngBytes()])
+    let cursor = 0
+    return new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (cursor >= pieces.length) {
+            controller.close()
+            return
+          }
+          const value = pieces[cursor]
+          cursor += 1
+          read = true
+          controller.enqueue(value)
+        },
+        cancel() {
+          cancelled = true
         }
-        signal?.addEventListener('abort', rejectWithAbort, { once: true })
+      },
+      { highWaterMark: 0 }
+    )
+  }
+
+  const requestImpl = async (_input: string | URL, options: { signal: AbortSignal; ip: string }): Promise<Response> => {
+    const input = String(_input)
+    calls.push(input)
+    ips.push(options.ip)
+    const script = scripts[Math.min(calls.length - 1, scripts.length - 1)] as FakeScript
+    if (script.throwOnRequest !== undefined) throw script.throwOnRequest
+    if (script.hangUntilAbort === true) {
+      return await new Promise<Response>((_resolve, reject) => {
+        const onAbort = (): void => reject(options.signal.reason ?? new Error('请求被中止'))
+        if (options.signal.aborted) onAbort()
+        else options.signal.addEventListener('abort', onAbort, { once: true })
       })
     }
-
     const status = script.status ?? 200
-    const ok = script.ok ?? (status >= 200 && status < 300)
-    const headers = new Map(Object.entries(script.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value]))
-    const body = script.body ?? (script.chunks === undefined ? pngBytes() : undefined)
-
-    const headersView = {
-      get: (name: string): string | null => headers.get(name.toLowerCase()) ?? null
+    const headerMap = new Map<string, string>()
+    for (const [name, value] of Object.entries(script.headers ?? {})) {
+      headerMap.set(name.toLowerCase(), value)
     }
-
-    if (body !== undefined) {
-      return {
-        status,
-        ok,
-        url: script.url ?? url,
-        headers: headersView,
-        body: null,
-        arrayBuffer: async () => {
-          read = true
-          return body.slice().buffer
-        }
-      }
-    }
-
-    const chunks = script.chunks ?? []
-    let cursor = 0
+    // 手写 Response 形对象：body 直接是受控 ReadableStream，读/取消标记才可靠
+    // （绕开真实 Response/undici 的预拉取与取消传播问题）；下游只用 status/ok/headers.get/body.getReader。
     return {
       status,
-      ok,
-      url: script.url ?? url,
-      headers: headersView,
-      body: {
-        getReader: () => ({
-          read: async () => {
-            if (cursor >= chunks.length) return { done: true, value: undefined }
-            const value = chunks[cursor]
-            cursor += 1
-            read = true
-            return { done: false, value }
-          },
-          cancel: async () => {
-            cancelled = true
-          }
-        })
-      },
-      arrayBuffer: async () => new Uint8Array(0).buffer
-    }
-  }) as unknown as typeof fetch
+      ok: status >= 200 && status < 300,
+      headers: { get: (name: string): string | null => headerMap.get(name.toLowerCase()) ?? null },
+      body: buildBody(script)
+    } as unknown as Response
+  }
 
   const result = await readRemoteImage(
     { url, allowNetworkImages, allowedImageHosts },
-    { fetchImpl, dnsLookup, timeoutMs }
+    { requestImpl, dnsLookup, timeoutMs }
   )
-  const outcome: FakeOutcome = { result, bodyRead: () => read, cancelled: () => cancelled }
-  return { ...outcome, calls, dnsCalls }
+  return { result, calls, ips, dnsCalls, bodyRead: () => read, cancelled: () => cancelled }
 }
 
 function chunk(size: number, seed: number): Uint8Array {
@@ -161,7 +155,7 @@ const PUBLIC_PNG = { headers: { 'content-type': 'image/png' } } as const
 /* ---------- 主流程 ---------- */
 
 async function main(): Promise<void> {
-  console.log('=== G1 验证：网络图片授权与主进程代理抓取 ===')
+  console.log('=== G1 验证：网络图片授权与主进程代理抓取（含 R10 重绑定闭合）===')
   console.log(`上限：${REMOTE_IMAGE_LIMIT_BYTES / 1024 / 1024} MB　运行时：Node ${process.versions.node}\n`)
 
   /* ---------- 一、授权门 ---------- */
@@ -384,8 +378,18 @@ async function main(): Promise<void> {
     const empty = await withFake({ headers: { 'content-type': 'image/png' }, chunks: [] }, 'https://img.example/e.png')
     check('空响应体不报告成功', empty.result.status === 'unreachable', String(empty.result.status))
 
+    const markup = await withFake(
+      { headers: { 'content-type': 'image/png' }, body: textBytes('<html><script>alert(1)</script>') },
+      'https://img.example/fake.png'
+    )
+    check(
+      '声明图片却返回文本/脚本：魔数嗅探拦下',
+      markup.result.status === 'unsupported-format' && markup.result.dataUrl === null,
+      `status=${markup.result.status}`
+    )
+
     const failed = await withFake(
-      { throwOnFetch: new Error('getaddrinfo ENOTFOUND img.example') },
+      { throwOnRequest: new Error('getaddrinfo ENOTFOUND img.example') },
       'https://img.example/badge.png'
     )
     check(
@@ -402,60 +406,75 @@ async function main(): Promise<void> {
     )
   }
 
-  /* ---------- 五、重定向复核 ---------- */
+  /* ---------- 五、重定向（手动逐跳） ---------- */
   {
     const toInternal = await withFake(
-      { url: 'http://127.0.0.1:9/status.png', headers: { 'content-type': 'image/png' } },
+      { status: 302, headers: { location: 'http://127.0.0.1:9/status.png' } },
       'https://img.example/redirect.png'
     )
     check(
-      '重定向到本机地址：拦下且不返回内容',
-      toInternal.result.status === 'forbidden-host' && toInternal.result.dataUrl === null,
-      `status=${toInternal.result.status}`
+      '重定向到本机地址：下游前拦下且不再连接',
+      toInternal.result.status === 'forbidden-host' &&
+        toInternal.result.dataUrl === null &&
+        toInternal.calls.length === 1,
+      `status=${toInternal.result.status} 连接数=${toInternal.calls.length}`
     )
 
     const toFile = await withFake(
-      { url: 'file:///c:/windows/win.ini', headers: { 'content-type': 'image/png' } },
+      { status: 302, headers: { location: 'file:///c:/windows/win.ini' } },
       'https://img.example/redirect.png'
     )
     check(
-      '重定向到非 http 协议：拒绝',
-      toFile.result.status === 'unsupported-protocol' && toFile.result.dataUrl === null,
-      `status=${toFile.result.status}`
+      '重定向到非 http 协议：拒绝且不再连接',
+      toFile.result.status === 'unsupported-protocol' && toFile.result.dataUrl === null && toFile.calls.length === 1,
+      `status=${toFile.result.status} 连接数=${toFile.calls.length}`
     )
 
     const toUnlisted = await withFake(
-      { url: 'https://evil.example/x.png', headers: { 'content-type': 'image/png' } },
+      { status: 302, headers: { location: 'https://evil.example/x.png' } },
       'https://img.example/redirect.png',
       true,
       ['img.example']
     )
     check(
-      '重定向到未授权域名：拒绝',
-      toUnlisted.result.status === 'not-authorized' && toUnlisted.result.dataUrl === null,
-      `status=${toUnlisted.result.status}`
+      '重定向到未授权域名：拒绝且不再连接',
+      toUnlisted.result.status === 'not-authorized' &&
+        toUnlisted.result.dataUrl === null &&
+        toUnlisted.calls.length === 1,
+      `status=${toUnlisted.result.status} 连接数=${toUnlisted.calls.length}`
     )
 
     const toAllowed = await withFake(
-      { url: 'https://cdn.example/x.png', headers: { 'content-type': 'image/png' } },
+      [
+        { status: 302, headers: { location: 'https://cdn.example/x.png' } },
+        { headers: { 'content-type': 'image/png' } }
+      ],
       'https://img.example/redirect.png',
       true,
       ['img.example', 'cdn.example']
     )
-    check('重定向到授权域名内其它主机：放行', toAllowed.result.status === 'ok', String(toAllowed.result.status))
+    check(
+      '重定向到授权域名内其它主机：逐跳复核后放行',
+      toAllowed.result.status === 'ok' && toAllowed.calls.length === 2,
+      `status=${toAllowed.result.status} 连接数=${toAllowed.calls.length}`
+    )
+
+    const loop = await withFake(
+      Array.from({ length: 8 }, () => ({ status: 302, headers: { location: 'https://img.example/loop.png' } })),
+      'https://img.example/redirect.png'
+    )
+    check(
+      '重定向超过上限：停止并归为不可达',
+      loop.result.status === 'unreachable' && loop.result.dataUrl === null && loop.calls.length === 6,
+      `status=${loop.result.status} 连接数=${loop.calls.length}`
+    )
   }
 
   /* ---------- 六、跨分支不变量 ---------- */
   {
     const cases: Array<[string, FakeScript, string, boolean, string[]]> = [
       ['正常', PUBLIC_PNG, 'https://img.example/a.png', true, []],
-      [
-        '404',
-        { status: 404, ok: false, headers: { 'content-type': 'image/png' } },
-        'https://img.example/a.png',
-        true,
-        []
-      ],
+      ['404', { status: 404, headers: { 'content-type': 'image/png' } }, 'https://img.example/a.png', true, []],
       ['SVG', { headers: { 'content-type': 'image/svg+xml' } }, 'https://img.example/a.png', true, []],
       [
         '超限',
@@ -464,7 +483,7 @@ async function main(): Promise<void> {
         true,
         []
       ],
-      ['网络错误', { throwOnFetch: new Error('socket hang up') }, 'https://img.example/a.png', true, []],
+      ['网络错误', { throwOnRequest: new Error('socket hang up') }, 'https://img.example/a.png', true, []],
       ['内网', PUBLIC_PNG, 'http://169.254.169.254/a.png', true, []],
       ['未授权', PUBLIC_PNG, 'https://img.example/a.png', false, []],
       ['白名单外', PUBLIC_PNG, 'https://img.example/a.png', true, ['only.example']]
@@ -472,8 +491,8 @@ async function main(): Promise<void> {
 
     let onlyOkCarriesDataUrl = true
     let allDataUrlsAreDataScheme = true
-    for (const [label, script, url, allowNetworkImages, hosts] of cases) {
-      const outcome = await withFake(script, url, allowNetworkImages, hosts)
+    for (const [label, script, url, allow, hosts] of cases) {
+      const outcome = await withFake(script, url, allow, hosts)
       if (outcome.result.status !== 'ok' && outcome.result.dataUrl !== null) onlyOkCarriesDataUrl = false
       if (outcome.result.dataUrl !== null && !outcome.result.dataUrl.startsWith('data:'))
         allDataUrlsAreDataScheme = false
@@ -546,6 +565,43 @@ async function main(): Promise<void> {
       '公网 IP 字面量不触发 DNS 解析',
       ipLiteral.result.status === 'ok' && ipLiteral.dnsCalls.length === 0,
       `status=${ipLiteral.result.status} dnsCalls=${ipLiteral.dnsCalls.length}`
+    )
+  }
+
+  /* ---------- 八、DNS 重绑定闭合（固定连接 IP） ---------- */
+  {
+    const pinned = await withFake(PUBLIC_PNG, 'https://img.example/x.png', true, [], undefined, ['93.184.216.34'])
+    check(
+      '连接固定到已校验的公网 IP（不二次独立解析）',
+      pinned.result.status === 'ok' && pinned.ips.length === 1 && pinned.ips[0] === '93.184.216.34',
+      `连接 IP=${pinned.ips.join(',')} DNS 解析次数=${pinned.dnsCalls.length}`
+    )
+
+    const multiPublic = await withFake(PUBLIC_PNG, 'https://img.example/x.png', true, [], undefined, [
+      '93.184.216.34',
+      '203.0.113.9'
+    ])
+    check(
+      '多个公网 IP 时取其一固定连接，且不为内网',
+      multiPublic.result.status === 'ok' && multiPublic.ips[0] === '93.184.216.34',
+      `连接 IP=${multiPublic.ips.join(',')}`
+    )
+
+    const perHop = await withFake(
+      [
+        { status: 302, headers: { location: 'https://cdn.example/x.png' } },
+        { headers: { 'content-type': 'image/png' } }
+      ],
+      'https://img.example/redirect.png',
+      true,
+      ['img.example', 'cdn.example'],
+      undefined,
+      ['93.184.216.34']
+    )
+    check(
+      '重定向每一跳都用固定 IP 连接',
+      perHop.result.status === 'ok' && perHop.ips.length === 2 && perHop.ips.every((ip) => ip === '93.184.216.34'),
+      `各跳连接 IP=${perHop.ips.join(' , ')}`
     )
   }
 
