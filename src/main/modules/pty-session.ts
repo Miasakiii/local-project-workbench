@@ -62,8 +62,21 @@ export class PtySessionManager {
    *
    * 启动目录由主进程解析后传入（渲染进程只提供「项目 ID + 相对路径」），
    * 此处再做一次存在性与类型复核，作为纵深防御。
+   *
+   * `trusted` 由主进程从登记表读出后传入，**不接受渲染层声明**：终端具备当前用户的
+   * 系统权限，界面上的三个创建入口（头部主按钮、Ctrl+`、文件栏右键）已各自拦过一次，
+   * 但主进程必须自己再判一次——否则将来新增入口漏检时没有兜底。
    */
-  create(sender: WebContents, request: TerminalCreateRequest, resolvedCwd: string): TerminalCreateResult {
+  create(
+    sender: WebContents,
+    request: TerminalCreateRequest,
+    resolvedCwd: string,
+    trusted: boolean
+  ): TerminalCreateResult {
+    if (trusted !== true) {
+      throw new Error('该项目尚未信任：终端具备当前用户的系统权限，请先在项目头部确认信任后再创建。')
+    }
+
     const cwd = resolvedCwd
     if (typeof cwd !== 'string' || cwd.length === 0) {
       throw new Error('启动目录不能为空')

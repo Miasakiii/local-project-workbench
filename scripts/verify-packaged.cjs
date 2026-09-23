@@ -269,7 +269,10 @@ async function main() {
     }
     check('打包后可打开项目并列出文件', opened && treeRows > 0, `点击打开=${opened} 文件树行数=${treeRows}`)
 
-    // 终端：验证被裁剪过的 node-pty 在打包产物中确实可用
+    // 终端：验证被裁剪过的 node-pty 在打包产物中确实可用。
+    // 先授信——终端创建在主进程按登记表的 trusted 复核（纵深防御），
+    // 这一版打包验证顺带覆盖「授信后可建会话」。
+    await evaluate(cdp, `window.workbench.project.update({ projectId: 'verify-project', trusted: true })`)
     const terminal = await evaluate(
       cdp,
       `(async () => {

@@ -662,11 +662,32 @@ function runChild() {
       `stale=${String(snapshot?.stale)} error=${String(snapshot?.error)}`
     )
 
+    // 终端信任门的纵深防御：界面拦过一次，主进程必须自己再判一次。
+    // 这里刻意**绕过界面**直接走 IPC，证明未信任项目连 IPC 层都建不出会话。
+    const untrustedCreate = await window.webContents.executeJavaScript(`(async () => {
+      try {
+        await window.workbench.terminal.create({ projectId: ${JSON.stringify(projectId)}, relativePath: '', cols: 80, rows: 24 })
+        return 'created'
+      } catch (error) {
+        return String(error?.message ?? error)
+      }
+    })()`)
+    record(
+      '未信任项目的终端创建被主进程拒绝（绕过界面直连 IPC）',
+      String(untrustedCreate).includes('信任'),
+      String(untrustedCreate).slice(0, 48)
+    )
+
+    // 授信后再建：证明主路径没被这道门堵死（下面 UI 流程开始前再撤回信任，
+    // 让「未信任项目创建终端前先确认信任」仍旧覆盖原本的分支）
+    await window.webContents.executeJavaScript(
+      `window.workbench.project.update({ projectId: ${JSON.stringify(projectId)}, trusted: true })`
+    )
     const terminal = await window.webContents.executeJavaScript(
       `window.workbench.terminal.create({ projectId: ${JSON.stringify(projectId)}, relativePath: '', cols: 80, rows: 24 })`
     )
     record(
-      '终端会话经 IPC 创建',
+      '信任后终端会话经 IPC 创建',
       typeof terminal?.sessionId === 'string' && terminal.sessionId.length > 0,
       `sessionId=${String(terminal?.sessionId)} shell=${String(terminal?.shell)}`
     )
@@ -676,6 +697,17 @@ function runChild() {
       )
       record('终端会话可关闭', true, '已 dispose')
     }
+    await window.webContents.executeJavaScript(
+      `window.workbench.project.update({ projectId: ${JSON.stringify(projectId)}, trusted: false })`
+    )
+    const trustRestored = await window.webContents.executeJavaScript(
+      `window.workbench.project.list().then((list) => list.find((item) => item.id === ${JSON.stringify(projectId)})?.trusted)`
+    )
+    record(
+      '撤回信任后回到未信任状态（供后续 UI 分支验证）',
+      trustRestored === false,
+      `trusted=${String(trustRestored)}`
+    )
 
     // 导航限制：尝试跳转到外链，地址不应改变
     const before = window.webContents.getURL()
