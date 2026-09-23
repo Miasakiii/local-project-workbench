@@ -81,8 +81,6 @@ export const IpcChannel = {
   terminalExit: 'terminal:exit'
 } as const
 
-export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
-
 export type AppInfoResult = AppInfo
 
 /* ---------- 项目库 ---------- */

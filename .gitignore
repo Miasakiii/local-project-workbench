@@ -4,6 +4,7 @@ outputs/
 
 # ---- AI 工作记忆与本地配置（不进入代码仓库）----
 .workbuddy-ai/
+.stepcode/
 
 # ---- 依赖与构建产物 ----
 node_modules/

@@ -3,7 +3,7 @@
  *
  * 约定：
  * - 渲染进程不得构造或传递任意绝对路径；路径一律以「项目 ID + 相对路径」表达。
- * - GitSnapshot 与 TerminalSession 不作为永久事实，不长期保存。
+ * - GitSnapshot 不作为永久事实，不长期保存。
  */
 
 /** 项目：已登记的本地目录（C08：不要求是 Git 仓库） */
@@ -149,16 +149,6 @@ export interface ProjectChangedEvent {
   /** 是否为批量变化（超出上限时只给汇总，不逐条列出） */
   bulk: boolean
   at: string
-}
-
-/** 终端会话：只在本次应用运行期间有效 */
-export interface TerminalSession {
-  sessionId: string
-  projectId: string
-  shell: string
-  /** 启动目录 */
-  cwd: string
-  running: boolean
 }
 
 /** 应用级信息 */

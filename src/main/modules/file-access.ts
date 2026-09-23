@@ -213,11 +213,6 @@ export function discriminateTrashFailure(absolutePath: string, error: unknown): 
   return { abort: true, reason: 'trash-unavailable', message: `无法发送到系统回收站：${raw}` }
 }
 
-/** 兼容旧调用：仅判断「回收站不可用」。 */
-export function isTrashUnavailable(absolutePath: string, error: unknown): boolean {
-  return discriminateTrashFailure(absolutePath, error).abort
-}
-
 /**
  * 文件操作层的路径拒绝码：沿用 path-guard 的取值，并补充 `invalid-path`
  * 用于「形态检查未通过但无法归入具体原因」的情形。
