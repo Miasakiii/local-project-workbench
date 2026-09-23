@@ -447,10 +447,11 @@ release/本地项目工作台-0.1.0-setup.exe /S /D=F:\sud\local-project-workben
 
 **应用图标**（2026-09-23 补齐）：安装包、任务栏、窗口标题栏与资源管理器图标由
 `scripts/build-icon.mjs` 程序化生成（`build/icon.ico`，解析几何 + 4×4 超采样抗锯齿，
-256/48/32/16 四个尺寸，256 位图内嵌 PNG）。`pack:dir`／`pack:win` 会先跑 `node scripts/build-icon.mjs`
-再交给 electron-builder（`win.icon: build/icon.ico`）；也可单独执行 `npm run build:icon` 预览
-（同时产出 `build/icon-256.png`）。构图是圆角方底（品牌蓝渐变，取自界面强调色）+ 白窗
-（标题栏三钮）+ 终端提示符 `>_`。**换设计师稿时直接替换 `build/icon.ico` 即可**，脚本与
+256/48/32/16 四个尺寸，256 位图内嵌 PNG，RGBA）。`pack:dir`／`pack:win` 会先跑
+`node scripts/build-icon.mjs` 再交给 electron-builder（`win.icon: build/icon.ico`）；
+也可单独执行 `npm run build:icon` 预览（同时产出 `build/icon-256.png`）。构图是
+**45° 切角方底**（品牌蓝渐变，取自界面强调色；切角处透明）+ 白窗（标题栏三钮）+
+终端提示符 `>_`。**换设计师稿时直接替换 `build/icon.ico` 即可**，脚本与
 `electron-builder.yml` 的指向不变。此前「使用默认 Electron 图标」的设计资源缺口已关闭。
 
 ---

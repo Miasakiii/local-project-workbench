@@ -7,11 +7,11 @@
  * 版本可变、可复现、无需外部依赖。若要换成设计师稿，直接替换 build/icon.ico 即可，
  * 本脚本与 electron-builder.yml 的 `win.icon` 指向不变。
  *
- * 构图：圆角方底（品牌蓝渐变）上一个白色窗口（含标题栏与三个窗口钮），窗口内是
- * 终端提示符 ">_"——对应产品三件事里的「项目首页 + 终端」，与界面强调色 #007aff 同源。
+ * 构图：切角方底（45° 倒角、角落透明，品牌蓝渐变）上一个白色窗口（含标题栏与三个窗口钮），
+ * 窗口内是终端提示符 ">_"——对应产品三件事里的「项目首页 + 终端」，与界面强调色 #007aff 同源。
  *
  * 输出：
- *   build/icon.ico          多尺寸 ICO（256/48/32/16，256 为内嵌 PNG）
+ *   build/icon.ico          多尺寸 ICO（256/48/32/16，256 为内嵌 PNG；RGBA，切角处透明）
  *   build/icon-256.png      预览用大图（便于肉眼检查）
  *
  * 用法：node scripts/build-icon.mjs [--out=build/icon.ico]
@@ -54,6 +54,16 @@ function roundedRectDistance(px, py, x0, y0, x1, y1, radius) {
   )
 }
 
+/** 45° 切角矩形判定：四角各截去一个直角边为 chamfer 的等腰直角三角形 */
+function chamferRectContains(px, py, x0, y0, x1, y1, chamfer) {
+  if (px < x0 || px > x1 || py < y0 || py > y1) return false
+  if (px < x0 + chamfer && py < y0 + chamfer && px - x0 + py - y0 > chamfer) return false // 左上
+  if (px > x1 - chamfer && py < y0 + chamfer && x1 - px + py - y0 > chamfer) return false // 右上
+  if (px < x0 + chamfer && py > y1 - chamfer && px - x0 + y1 - py > chamfer) return false // 左下
+  if (px > x1 - chamfer && py > y1 - chamfer && x1 - px + y1 - py > chamfer) return false // 右下
+  return true
+}
+
 /** 点到线段的距离 */
 function segmentDistance(px, py, x1, y1, x2, y2) {
   const vx = x2 - x1
@@ -74,6 +84,8 @@ const mix = (a, b, t) => a.map((channel, index) => channel + (b[index] - channel
 function shadePoint(sx, sy, scale) {
   const inRect = (x0, y0, x1, y1, radius) =>
     roundedRectDistance(sx, sy, x0 * scale, y0 * scale, x1 * scale, y1 * scale, radius * scale) <= 0
+  const inChamfer = (x0, y0, x1, y1, chamfer) =>
+    chamferRectContains(sx, sy, x0 * scale, y0 * scale, x1 * scale, y1 * scale, chamfer * scale)
   // 小尺寸（16/32）下按比例缩细的笔画会消失，因此给一个像素级下限
   const minHalf = scale <= 32 / 256 ? 1.7 : 0.6
   const onStroke = (x1, y1, x2, y2, width) =>
@@ -82,8 +94,8 @@ function shadePoint(sx, sy, scale) {
 
   let color = null
 
-  // 1) 圆角方底：品牌蓝对角渐变（按设计稿坐标归一化，尺寸无关）
-  if (inRect(8, 8, 248, 248, 56)) {
+  // 1) 切角方底：45° 倒角（角落透明），品牌蓝对角渐变（按设计稿坐标归一化，尺寸无关）
+  if (inChamfer(8, 8, 248, 248, 30)) {
     color = mix(TOP, BOTTOM, (sx / scale + sy / scale) / (2 * 256))
   }
   // 2) 窗口纸面
@@ -152,18 +164,18 @@ function chunk(type, data) {
   return Buffer.concat([length, body, crc])
 }
 
-/** 24 位 RGB PNG，filter 0，便于任何解码器读取（ICO 内嵌也用同一格式） */
+/** 32 位 RGBA PNG，filter 0，便于任何解码器读取（ICO 内嵌也用同一格式） */
 function encodePng(width, height, pixels) {
   const header = Buffer.alloc(13)
   header.writeUInt32BE(width, 0)
   header.writeUInt32BE(height, 4)
   header[8] = 8 // 位深
-  header[9] = 2 // 颜色类型：真彩色
+  header[9] = 6 // 颜色类型：真彩色 + alpha
   header[10] = 0 // 压缩
   header[11] = 0 // 过滤
   header[12] = 0 // 无隔行
 
-  const raw = Buffer.alloc(height * (1 + width * 3))
+  const raw = Buffer.alloc(height * (1 + width * 4))
   let offset = 0
   for (let y = 0; y < height; y += 1) {
     raw[offset] = 0
@@ -173,7 +185,8 @@ function encodePng(width, height, pixels) {
       raw[offset] = pixel[0]
       raw[offset + 1] = pixel[1]
       raw[offset + 2] = pixel[2]
-      offset += 3
+      raw[offset + 3] = pixel[3]
+      offset += 4
     }
   }
 
@@ -212,15 +225,14 @@ function encodeIco(images) {
 
 /* ---------- 主流程 ---------- */
 
-/** 光栅化：整幅铺满（图标外侧同样给品牌蓝底，圆角之外的极少数像素也着色） */
+/** 光栅化：切角之外透明（RGBA 第 4 通道），边缘像素按覆盖率给部分 alpha 抗锯齿 */
 function rasterize(size) {
   const pixels = new Array(size * size)
   const flatten = (color) => color.map((channel) => Math.max(0, Math.min(255, Math.round(channel))))
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const hit = shade(x + 0.5, y + 0.5, size)
-      const color = hit === null ? mix(TOP, BOTTOM, ((x + 0.5) / size + (y + 0.5) / size) / 2) : hit.color
-      pixels[y * size + x] = flatten(color)
+      pixels[y * size + x] = hit === null ? [0, 0, 0, 0] : [...flatten(hit.color), Math.round(hit.alpha * 255)]
     }
   }
   return pixels
