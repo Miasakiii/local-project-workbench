@@ -1,13 +1,17 @@
 import type { FileEntry, FileListResult, FileOperationBatchResult, FilePreview } from '@shared/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ContextMenuItem, ContextMenuState } from './ContextMenu'
+import { ContextMenu } from './ContextMenu'
 import { ChevronIcon, FileIcon, FolderIcon } from './icons'
 import { PreviewPane } from './PreviewPane'
 import { ResizeHandle } from './ResizeHandle'
 
 interface FileBrowserProps {
   projectId: string
-  /** 项目是否已被用户信任；未信任时写操作按钮不可用 */
+  /** 项目是否已被用户信任；未信任时写操作不可用 */
   trusted: boolean
+  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b，设置页承载） */
+  editorPath: string | null
   /** 需要定位并选中的条目（来自视图状态恢复） */
   initialPath: string
   /** 左侧树栏宽度（像素） */
@@ -129,10 +133,15 @@ function legacyCopy(text: string): boolean {
  * 边界：预览仍只读；M3 已加入新建、复制／剪切粘贴、重命名与删除，均限制在当前项目内；
  * Git 忽略的文件照常列出；跨项目／跨卷移动交给系统资源管理器。
  * 目录读取失败、条目截断、不可用条目都在原位说明，不显示空白成功页。
+ *
+ * 操作入口（界面重构三项·阶段 3）：针对**某个条目**的动作一律走右键上下文菜单
+ * （渲染层自绘 `ContextMenu`），工具栏只留视图级操作与「新建」。
+ * 树行另有键盘等价键 Shift+F10／Menu：焦点行同样能开出同一套菜单。
  */
 export function FileBrowser({
   projectId,
   trusted,
+  editorPath,
   initialPath,
   paneWidth,
   refreshToken,
@@ -150,10 +159,19 @@ export function FileBrowser({
   const [loadingPreview, setLoadingPreview] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [operationBusy, setOperationBusy] = useState(false)
-  const [clipboard, setClipboard] = useState<ClipboardState | null>(null)
+  /**
+   * 剪贴板状态（复制／剪切待粘贴的项目）。
+   *
+   * 刻意用 ref 而非 state：它**没有任何渲染依赖**（工具栏已不放粘贴按钮），
+   * 而「复制」与随后的右键菜单可能落在同一个事件批次里——ref 是同步更新的，
+   * 菜单据此判断要不要给出「粘贴」才不会拿到上一次的旧状态。
+   */
+  const clipboardRef = useRef<ClipboardState | null>(null)
   const [operationNotice, setOperationNotice] = useState<OperationNotice | null>(null)
   /** 键盘树导航的「焦点光标」；null 表示尚未进入树，此时首个可见行可被 Tab 聚焦 */
   const [cursorPath, setCursorPath] = useState<string | null>(null)
+  /** 右键上下文菜单（渲染层自绘）；null 表示未打开 */
+  const [menu, setMenu] = useState<ContextMenuState | null>(null)
 
   const generationRef = useRef(0)
   const selectedPathsRef = useRef<Set<string>>(new Set())
@@ -342,48 +360,54 @@ export function FileBrowser({
     [firstSuccessfulTarget, onPathChange, refreshLoadedDirectories, revealEntry]
   )
 
-  const renameSelected = useCallback(async () => {
-    if (selectedEntry === null || selectedCount !== 1 || operationBusy) return
-    const nextName = window.prompt('将项目内条目重命名为：', selectedEntry.name)
-    if (nextName === null) return
+  /** 重命名单个条目。只接受「当前选择就是这一项」，多选时不执行。 */
+  const renameSelected = useCallback(
+    async (entry: FileEntry) => {
+      const selection = selectedPathList()
+      if (selection.length !== 1 || selection[0] !== entry.relativePath || operationBusy) return
+      const nextName = window.prompt('将项目内条目重命名为：', entry.name)
+      if (nextName === null) return
 
-    setOperationBusy(true)
-    setOperationNotice(null)
-    try {
-      const result = await window.workbench.file.rename({
-        projectId,
-        relativePath: selectedEntry.relativePath,
-        newName: nextName
-      })
-      if (result.status !== 'ok' || result.targetRelativePath === null) {
-        setOperationNotice({ tone: 'error', title: result.message, details: [] })
-        return
+      setOperationBusy(true)
+      setOperationNotice(null)
+      try {
+        const result = await window.workbench.file.rename({
+          projectId,
+          relativePath: entry.relativePath,
+          newName: nextName
+        })
+        if (result.status !== 'ok' || result.targetRelativePath === null) {
+          setOperationNotice({ tone: 'error', title: result.message, details: [] })
+          return
+        }
+
+        setOperationNotice({ tone: 'success', title: result.message, details: [] })
+        generationRef.current += 1
+        selectedEntryRef.current = null
+        setDirs({})
+        setExpanded(new Set())
+        clearSelection()
+        onPathChange(result.targetRelativePath)
+        await revealEntry(result.targetRelativePath, true)
+      } catch (error) {
+        setOperationNotice({
+          tone: 'error',
+          title: error instanceof Error ? error.message : String(error),
+          details: []
+        })
+      } finally {
+        setOperationBusy(false)
       }
+    },
+    [clearSelection, onPathChange, operationBusy, projectId, revealEntry, selectedPathList]
+  )
 
-      setOperationNotice({ tone: 'success', title: result.message, details: [] })
-      generationRef.current += 1
-      selectedEntryRef.current = null
-      setDirs({})
-      setExpanded(new Set())
-      clearSelection()
-      onPathChange(result.targetRelativePath)
-      await revealEntry(result.targetRelativePath, true)
-    } catch (error) {
-      setOperationNotice({
-        tone: 'error',
-        title: error instanceof Error ? error.message : String(error),
-        details: []
-      })
-    } finally {
-      setOperationBusy(false)
-    }
-  }, [clearSelection, onPathChange, operationBusy, projectId, revealEntry, selectedCount, selectedEntry])
-
+  /** 新建空文件／空文件夹；`target` 由调用方给出（工具栏用当前目标目录，右键菜单用条目所在目录） */
   const createNewEntry = useCallback(
-    async (kind: 'file' | 'directory') => {
+    async (kind: 'file' | 'directory', target: string) => {
       if (!trusted || operationBusy) return
       const label = kind === 'file' ? '文件' : '文件夹'
-      const name = window.prompt(`在「${targetDirectory.length === 0 ? '项目根' : targetDirectory}」中新建${label}：`)
+      const name = window.prompt(`在「${target.length === 0 ? '项目根' : target}」中新建${label}：`)
       if (name === null) return
 
       setOperationBusy(true)
@@ -391,7 +415,7 @@ export function FileBrowser({
       try {
         const result = await window.workbench.file.create({
           projectId,
-          parentRelativePath: targetDirectory,
+          parentRelativePath: target,
           name,
           kind
         })
@@ -407,14 +431,14 @@ export function FileBrowser({
         setOperationBusy(false)
       }
     },
-    [operationBusy, projectId, revealSuccessfulTarget, targetDirectory, trusted]
+    [operationBusy, projectId, revealSuccessfulTarget, trusted]
   )
 
   const setClipboardFromSelection = useCallback(
     (mode: ClipboardMode) => {
       const paths = selectedPathList()
       if (paths.length === 0 || !trusted) return
-      setClipboard({ mode, paths })
+      clipboardRef.current = { mode, paths }
       setOperationNotice({
         tone: 'success',
         title: `${mode === 'copy' ? '已复制' : '已剪切'} ${paths.length} 项，选择目标目录后点击「粘贴」。`,
@@ -424,46 +448,52 @@ export function FileBrowser({
     [selectedPathList, trusted]
   )
 
-  const pasteClipboard = useCallback(async () => {
-    if (clipboard === null || clipboard.paths.length === 0 || !trusted || operationBusy) return
+  /** 粘贴：`target` 由调用方显式给出（右键哪一行就粘到哪个目录） */
+  const pasteClipboard = useCallback(
+    async (target: string) => {
+      const clipboard = clipboardRef.current
+      if (clipboard === null || clipboard.paths.length === 0 || !trusted || operationBusy) return
 
-    setOperationBusy(true)
-    setOperationNotice(null)
-    try {
-      const result = await window.workbench.file.transfer({
-        projectId,
-        relativePaths: clipboard.paths,
-        targetDirectory,
-        mode: clipboard.mode
-      })
-      setOperationNotice(operationReport(result, clipboard.mode === 'copy' ? '复制粘贴' : '剪切粘贴'))
-      if (clipboard.mode === 'move') {
-        const remaining = result.items.filter((item) => item.status !== 'ok').map((item) => item.relativePath)
-        setClipboard(remaining.length === 0 ? null : { mode: 'move', paths: remaining })
+      setOperationBusy(true)
+      setOperationNotice(null)
+      try {
+        const result = await window.workbench.file.transfer({
+          projectId,
+          relativePaths: clipboard.paths,
+          targetDirectory: target,
+          mode: clipboard.mode
+        })
+        setOperationNotice(operationReport(result, clipboard.mode === 'copy' ? '复制粘贴' : '剪切粘贴'))
+        if (clipboard.mode === 'move') {
+          const remaining = result.items.filter((item) => item.status !== 'ok').map((item) => item.relativePath)
+          clipboardRef.current = remaining.length === 0 ? null : { mode: 'move', paths: remaining }
+        }
+        if (result.ok > 0) await revealSuccessfulTarget(result)
+      } catch (error) {
+        setOperationNotice({
+          tone: 'error',
+          title: error instanceof Error ? error.message : String(error),
+          details: []
+        })
+      } finally {
+        setOperationBusy(false)
       }
-      if (result.ok > 0) await revealSuccessfulTarget(result)
-    } catch (error) {
-      setOperationNotice({
-        tone: 'error',
-        title: error instanceof Error ? error.message : String(error),
-        details: []
-      })
-    } finally {
-      setOperationBusy(false)
-    }
-  }, [clipboard, operationBusy, projectId, revealSuccessfulTarget, targetDirectory, trusted])
+    },
+    [operationBusy, projectId, revealSuccessfulTarget, trusted]
+  )
 
+  /** 删除：一律进系统回收站，不可回收时整批停止并说明（语义见主进程 file-access） */
   const deleteSelected = useCallback(async () => {
     const paths = selectedPathList()
     if (paths.length === 0 || !trusted || operationBusy) return
     const previewPaths = paths
       .slice(0, 8)
       .map((path) => `• ${path}`)
-      .join('\\n')
-    const suffix = paths.length > 8 ? `\\n…以及另外 ${paths.length - 8} 项` : ''
+      .join('\n')
+    const suffix = paths.length > 8 ? `\n…以及另外 ${paths.length - 8} 项` : ''
     if (
       !window.confirm(
-        `将所选 ${paths.length} 项发送到系统回收站？\\n\\n${previewPaths}${suffix}\\n\\n项目根与 .git 元数据不会被删除。`
+        `将所选 ${paths.length} 项发送到系统回收站？\n\n${previewPaths}${suffix}\n\n项目根与 .git 元数据不会被删除。`
       )
     ) {
       return
@@ -628,6 +658,314 @@ export function FileBrowser({
     return output
   }, [dirs, expanded])
 
+  /* ---------- 面包屑：定位到当前选中项 ---------- */
+
+  const breadcrumb = useMemo(() => {
+    if (selectedPath === null) return []
+    const segments = selectedPath.split('/').filter((segment) => segment.length > 0)
+    const trail: Array<{ name: string; relativePath: string }> = []
+    let accumulated = ''
+    for (const segment of segments) {
+      accumulated = accumulated.length === 0 ? segment : `${accumulated}/${segment}`
+      trail.push({ name: segment, relativePath: accumulated })
+    }
+    return trail
+  }, [selectedPath])
+
+  /* ---------- 针对条目的动作（右键菜单与工具栏共用） ---------- */
+
+  /**
+   * 这些回调一律**显式接收目标条目**，不读 `selectedEntry`。
+   *
+   * 原因：右键菜单先选中条目、再开菜单，而 React 的状态更新是异步的——
+   * 若回调从 state 取目标，菜单项触发时拿到的还是选中前的旧值（通常是 null），
+   * 表现为「右键后点删除没有反应」。选择数量从 ref 读，那里是同步更新的。
+   */
+
+  const openExternally = useCallback(
+    async (entry: FileEntry) => {
+      await window.workbench.system.openPath({ projectId, relativePath: entry.relativePath })
+    },
+    [projectId]
+  )
+
+  const revealInSystem = useCallback(
+    async (entry: FileEntry) => {
+      await window.workbench.system.showInFolder({ projectId, relativePath: entry.relativePath })
+    },
+    [projectId]
+  )
+
+  /** 用指定编辑器打开（G3b）；编辑器未设置或启动失败时以可读原因反馈 */
+  const openWithEditor = useCallback(
+    async (entry: FileEntry) => {
+      const error = await window.workbench.system.openWith({ projectId, relativePath: entry.relativePath })
+      if (error === null) {
+        setOperationNotice({ tone: 'success', title: '已用指定编辑器打开', details: [entry.relativePath] })
+      } else {
+        setOperationNotice({ tone: 'error', title: '打开失败', details: [error] })
+      }
+    },
+    [projectId]
+  )
+
+  /** 复制条目相对路径到系统剪贴板（G3）。相对路径不离开本项目，无需主进程。 */
+  const copyPaths = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) return
+    const text = paths.join('\n')
+    const done = (): void =>
+      setOperationNotice({ tone: 'success', title: `已复制 ${paths.length} 个路径`, details: paths })
+    try {
+      if (navigator.clipboard?.writeText !== undefined) {
+        await navigator.clipboard.writeText(text)
+        done()
+      } else if (legacyCopy(text)) {
+        done()
+      } else {
+        setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
+      }
+    } catch {
+      if (legacyCopy(text)) done()
+      else setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
+    }
+  }, [])
+
+  /* ---------- 右键上下文菜单（界面重构三项·阶段 3） ---------- */
+
+  /** 未信任项目的写操作一律禁用，但保留入口，让用户看到「有哪些操作、为什么不能用」 */
+  const writeTitle = trusted ? undefined : '请先信任该项目（项目头部可切换），才能执行写操作'
+  /** 编辑器未设置时「用指定编辑器打开」不可用；说明写清楚去哪里设置 */
+  const editorTitle =
+    editorPath === null
+      ? '尚未设置编辑器：请在侧边栏「设置」→「编辑器」中选择'
+      : `用 ${editorPath.split(/[\\/]/).pop() ?? editorPath} 打开`
+
+  /** 条目的父目录：文件取其所在目录，目录取其自身 */
+  const directoryOf = useCallback(
+    (entry: FileEntry): string =>
+      entry.kind === 'directory' ? entry.relativePath : parentDirectoryOf(entry.relativePath),
+    []
+  )
+
+  /** 空白处（树背景）菜单：作用于当前目标目录 */
+  const whereLabel = targetDirectory.length === 0 ? '项目根' : targetDirectory
+
+  const blankMenu = useCallback((): ContextMenuItem[] => {
+    const where = targetDirectory.length === 0 ? '项目根' : targetDirectory
+    const create: ContextMenuItem[] = [
+      {
+        id: 'new-file',
+        label: '新建文件',
+        disabled: !trusted,
+        title: writeTitle ?? `在「${where}」中新建空文件`,
+        onSelect: () => void createNewEntry('file', targetDirectory)
+      },
+      {
+        id: 'new-directory',
+        label: '新建文件夹',
+        disabled: !trusted,
+        title: writeTitle ?? `在「${where}」中新建空文件夹`,
+        onSelect: () => void createNewEntry('directory', targetDirectory)
+      }
+    ]
+    const paste: ContextMenuItem[] =
+      clipboardRef.current === null || clipboardRef.current.paths.length === 0
+        ? []
+        : [
+            {
+              id: 'paste',
+              label: `粘贴（${clipboardRef.current?.paths.length ?? 0}）`,
+              disabled: !trusted,
+              title: writeTitle ?? `粘贴到${where}`,
+              separatorBefore: true,
+              onSelect: () => void pasteClipboard(targetDirectory)
+            }
+          ]
+    return [...create, ...paste, { id: 'refresh', label: '刷新', separatorBefore: true, onSelect: refreshAll }]
+  }, [createNewEntry, pasteClipboard, refreshAll, targetDirectory, trusted, writeTitle])
+
+  /**
+   * 条目菜单。分三段，顺序与右键本意一致：
+   * 1. 只读操作（预览／打开／展开）；
+   * 2. 跨对象操作（终端、复制路径、定位）；
+   * 3. 写操作（新建、复制、剪切、重命名、删除）。
+   */
+  const entryMenu = useCallback(
+    (entry: FileEntry): ContextMenuItem[] => {
+      const isDirectory = entry.kind === 'directory'
+
+      const read: ContextMenuItem[] = isDirectory
+        ? [
+            {
+              id: 'toggle',
+              label: expanded.has(entry.relativePath) ? '收起' : '展开',
+              onSelect: () => toggleDirectory(entry.relativePath)
+            }
+          ]
+        : [
+            {
+              id: 'preview',
+              label: '预览',
+              onSelect: () => openPreview(entry)
+            },
+            {
+              id: 'open-default',
+              label: '用默认程序打开',
+              onSelect: () => void openExternally(entry)
+            },
+            {
+              id: 'open-editor',
+              label: '用指定编辑器打开',
+              disabled: editorPath === null,
+              title: editorTitle,
+              onSelect: () => void openWithEditor(entry)
+            }
+          ]
+
+      const shared: ContextMenuItem[] = [
+        {
+          id: 'terminal',
+          label: isDirectory ? '在此目录新建终端' : '在所在目录新建终端',
+          onSelect: () => onOpenTerminalAt(directoryOf(entry))
+        },
+        {
+          id: 'copy-path',
+          label: '复制路径',
+          disabled: selectedCount === 0,
+          title: selectedCount <= 1 ? '复制该条目相对路径' : `复制所选 ${selectedCount} 个条目相对路径`,
+          onSelect: () => void copyPaths(selectedPathList())
+        },
+        {
+          id: 'reveal',
+          label: '在资源管理器中定位',
+          onSelect: () => void revealInSystem(entry)
+        }
+      ]
+
+      const createHere: ContextMenuItem[] = isDirectory
+        ? [
+            {
+              id: 'new-file',
+              label: '新建文件',
+              disabled: !trusted,
+              title: writeTitle ?? `在「${entry.relativePath}」中新建空文件`,
+              separatorBefore: true,
+              onSelect: () => void createNewEntry('file', entry.relativePath)
+            },
+            {
+              id: 'new-directory',
+              label: '新建文件夹',
+              disabled: !trusted,
+              title: writeTitle ?? `在「${entry.relativePath}」中新建空文件夹`,
+              onSelect: () => void createNewEntry('directory', entry.relativePath)
+            },
+            // 剪贴板有内容时才给出「粘贴」，目标就是右键的这个目录
+            ...(clipboardRef.current === null || clipboardRef.current.paths.length === 0
+              ? []
+              : [
+                  {
+                    id: 'paste',
+                    label: `粘贴（${clipboardRef.current?.paths.length ?? 0}）`,
+                    disabled: !trusted,
+                    title: writeTitle ?? `粘贴到「${entry.relativePath}」`,
+                    onSelect: () => void pasteClipboard(entry.relativePath)
+                  }
+                ])
+          ]
+        : []
+
+      const write: ContextMenuItem[] = [
+        {
+          id: 'copy',
+          label: '复制',
+          disabled: !trusted,
+          title: writeTitle ?? '复制所选项目，之后选择目标目录并粘贴',
+          separatorBefore: createHere.length === 0,
+          onSelect: () => setClipboardFromSelection('copy')
+        },
+        {
+          id: 'cut',
+          label: '剪切',
+          disabled: !trusted,
+          title: writeTitle ?? '剪切所选项目，之后选择目标目录并粘贴',
+          onSelect: () => setClipboardFromSelection('move')
+        },
+        {
+          id: 'rename',
+          label: '重命名',
+          disabled: !trusted || selectedCount !== 1,
+          title:
+            selectedCount !== 1
+              ? '重命名只对单个选中项可用（可先取消多选）'
+              : (writeTitle ?? '在同一父目录内重命名该条目'),
+          onSelect: () => void renameSelected(entry)
+        },
+        {
+          id: 'delete',
+          label: '删除',
+          danger: true,
+          disabled: !trusted,
+          title: writeTitle ?? '将所选项目发送到系统回收站',
+          separatorBefore: true,
+          onSelect: () => void deleteSelected()
+        }
+      ]
+
+      return [...read, ...shared, ...createHere, ...write]
+    },
+    [
+      copyPaths,
+      createNewEntry,
+      deleteSelected,
+      directoryOf,
+      editorPath,
+      editorTitle,
+      expanded,
+      onOpenTerminalAt,
+      openExternally,
+      openPreview,
+      openWithEditor,
+      pasteClipboard,
+      renameSelected,
+      selectedCount,
+      selectedPathList,
+      setClipboardFromSelection,
+      toggleDirectory,
+      trusted,
+      writeTitle,
+      revealInSystem
+    ]
+  )
+
+  /** 右键某一行：未选中则改选它（已选中则保留多选，与资源管理器一致），再按光标开菜单 */
+  const openMenuForEntry = useCallback(
+    (entry: FileEntry, x: number, y: number, returnFocusTo: HTMLElement | null) => {
+      if (!selectedPathsRef.current.has(entry.relativePath)) selectEntry(entry, false)
+      setMenu({ x, y, items: entryMenu(entry), returnFocusTo })
+    },
+    [entryMenu, selectEntry]
+  )
+
+  /** 右键空白处：作用于当前目标目录（未选中条目时为项目根） */
+  const openBlankMenu = useCallback(
+    (x: number, y: number, returnFocusTo: HTMLElement | null) => {
+      setMenu({ x, y, items: blankMenu(), returnFocusTo })
+    },
+    [blankMenu]
+  )
+
+  /** 键盘等价键：菜单贴在焦点行右侧弹出，位置确定、不依赖指针 */
+  const openMenuForKeyboard = useCallback(
+    (entry: FileEntry) => {
+      const element = rowRefs.current.get(entry.relativePath) ?? null
+      const rect = element?.getBoundingClientRect()
+      const x = rect === undefined ? 96 : Math.round(rect.left + 28)
+      const y = rect === undefined ? 160 : Math.round(rect.bottom)
+      openMenuForEntry(entry, x, y, element)
+    },
+    [openMenuForEntry]
+  )
+
   /* ---------- 键盘树导航（ARIA tree：漫游 tabindex + 方向键） ---------- */
 
   /** 可见的条目行（去掉提示行），顺序即视觉顺序，供 ↑/↓/Home/End 遍历 */
@@ -718,85 +1056,21 @@ export function FileBrowser({
           else openPreview(entry)
           break
         }
+        case 'F10':
+        case 'ContextMenu': {
+          // Shift+F10／Menu 键是「右键」的键盘等价物：给焦点行开出同一套菜单
+          const entry = cursorPath === null ? undefined : list[currentIndex]?.entry
+          if (entry === undefined) return
+          event.preventDefault()
+          openMenuForKeyboard(entry)
+          break
+        }
         default:
           break
       }
     },
-    [cursorPath, focusableRows, selectEntry, toggleDirectory, expanded, openPreview]
+    [cursorPath, focusableRows, openMenuForKeyboard, selectEntry, toggleDirectory, expanded, openPreview]
   )
-
-  /* ---------- 面包屑：定位到当前选中项 ---------- */
-
-  const breadcrumb = useMemo(() => {
-    if (selectedPath === null) return []
-    const segments = selectedPath.split('/').filter((segment) => segment.length > 0)
-    const trail: Array<{ name: string; relativePath: string }> = []
-    let accumulated = ''
-    for (const segment of segments) {
-      accumulated = accumulated.length === 0 ? segment : `${accumulated}/${segment}`
-      trail.push({ name: segment, relativePath: accumulated })
-    }
-    return trail
-  }, [selectedPath])
-
-  /* ---------- 工具栏动作 ---------- */
-
-  const openExternally = useCallback(async () => {
-    if (selectedEntry === null) return
-    await window.workbench.system.openPath({ projectId, relativePath: selectedEntry.relativePath })
-  }, [projectId, selectedEntry])
-
-  const revealInSystem = useCallback(async () => {
-    if (selectedEntry === null) return
-    await window.workbench.system.showInFolder({ projectId, relativePath: selectedEntry.relativePath })
-  }, [projectId, selectedEntry])
-
-  /** 用指定编辑器打开（G3b）；编辑器未设置或启动失败时以可读原因反馈 */
-  const openWithEditor = useCallback(async () => {
-    if (selectedEntry === null) return
-    const error = await window.workbench.system.openWith({ projectId, relativePath: selectedEntry.relativePath })
-    if (error === null) {
-      setOperationNotice({ tone: 'success', title: '已用指定编辑器打开', details: [selectedEntry.relativePath] })
-    } else {
-      setOperationNotice({ tone: 'error', title: '打开失败', details: [error] })
-    }
-  }, [projectId, selectedEntry])
-
-  /** 选择/更换用于「用指定编辑器打开」的编辑器（主进程选 exe，持久化到应用设置） */
-  const chooseEditor = useCallback(async () => {
-    const chosen = await window.workbench.system.setEditor()
-    if (chosen === null) {
-      setOperationNotice({ tone: 'error', title: '未设置编辑器', details: ['已取消选择'] })
-      return
-    }
-    const name = chosen.split(/[\\/]/).pop() ?? chosen
-    setOperationNotice({ tone: 'success', title: `已设置编辑器：${name}`, details: [chosen] })
-  }, [])
-
-  /** 复制所选条目相对路径到系统剪贴板（G3）。相对路径不离开本项目，无需主进程。 */
-  const copyPaths = useCallback(async () => {
-    const paths =
-      selectedCount === 1 && selectedEntry !== null ? [selectedEntry.relativePath] : [...selectedPathsRef.current]
-    if (paths.length === 0) return
-    const text = paths.join('\n')
-    const done = (): void =>
-      setOperationNotice({ tone: 'success', title: `已复制 ${paths.length} 个路径`, details: paths })
-    try {
-      if (navigator.clipboard?.writeText !== undefined) {
-        await navigator.clipboard.writeText(text)
-        done()
-      } else if (legacyCopy(text)) {
-        done()
-      } else {
-        setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
-      }
-    } catch {
-      if (legacyCopy(text)) done()
-      else setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
-    }
-  }, [selectedCount, selectedEntry])
-
-  const terminalDirectory = selectedEntry?.kind === 'directory' ? selectedEntry.relativePath : ''
 
   /** 拖拽分栏时限制范围：右侧预览区始终保留可用宽度 */
   const clampPaneWidth = useCallback((value: number): number => {
@@ -839,6 +1113,10 @@ export function FileBrowser({
           ))}
           {selectedPath === null ? <span className="hint">未选择条目</span> : null}
         </nav>
+        {/*
+          工具栏只留视图级操作与「新建」。针对某个条目的动作全部下沉到右键菜单
+          （树行右键，或焦点行按 Shift+F10／Menu 键），避免十几枚按钮挤占一行。
+        */}
         <div className="browser-actions">
           <button type="button" onClick={collapseAll} disabled={expanded.size === 0}>
             收起全部
@@ -846,105 +1124,49 @@ export function FileBrowser({
           <button type="button" onClick={refreshAll} disabled={operationBusy}>
             刷新
           </button>
-          <button
-            type="button"
-            onClick={() => void createNewEntry('file')}
-            disabled={!trusted || operationBusy}
-            title={trusted ? '在当前目标目录新建空文件' : '请先信任项目，才能执行文件操作'}
-          >
-            新建文件
-          </button>
-          <button
-            type="button"
-            onClick={() => void createNewEntry('directory')}
-            disabled={!trusted || operationBusy}
-            title={trusted ? '在当前目标目录新建空文件夹' : '请先信任项目，才能执行文件操作'}
-          >
-            新建文件夹
-          </button>
-          <button
-            type="button"
-            onClick={() => setClipboardFromSelection('copy')}
-            disabled={selectedCount === 0 || !trusted || operationBusy}
-            title="复制所选项目，之后选择目标目录并粘贴"
-          >
-            复制{selectedCount > 0 ? `（${selectedCount}）` : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => setClipboardFromSelection('move')}
-            disabled={selectedCount === 0 || !trusted || operationBusy}
-            title="剪切所选项目，之后选择目标目录并粘贴"
-          >
-            剪切{selectedCount > 0 ? `（${selectedCount}）` : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => void pasteClipboard()}
-            disabled={clipboard === null || clipboard.paths.length === 0 || !trusted || operationBusy}
-            title={
-              clipboard === null ? '剪贴板为空' : `粘贴到${targetDirectory.length === 0 ? '项目根' : targetDirectory}`
-            }
-          >
-            粘贴{clipboard === null ? '' : `（${clipboard.paths.length}）`}
-          </button>
-          <button
-            type="button"
-            onClick={() => void renameSelected()}
-            disabled={selectedEntry === null || selectedCount !== 1 || operationBusy || !trusted}
-            title={trusted ? '在同一父目录内重命名单个条目' : '请先信任项目，才能执行文件操作'}
-          >
-            {operationBusy ? '处理中…' : '重命名'}
-          </button>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => void deleteSelected()}
-            disabled={selectedCount === 0 || !trusted || operationBusy}
-            title={trusted ? '将所选项目发送到系统回收站' : '请先信任项目，才能执行文件操作'}
-          >
-            删除{selectedCount > 0 ? `（${selectedCount}）` : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => void openExternally()}
-            disabled={selectedEntry === null || selectedCount !== 1}
-          >
-            用默认程序打开
-          </button>
-          <button
-            type="button"
-            onClick={() => void openWithEditor()}
-            disabled={selectedEntry === null || selectedCount !== 1}
-            title="用「设置编辑器…」里选择的编辑器打开该文件"
-          >
-            用指定编辑器打开
-          </button>
-          <button
-            type="button"
-            onClick={() => void chooseEditor()}
-            title="选择用于「用指定编辑器打开」的编辑器可执行文件（保存在应用设置中）"
-          >
-            设置编辑器…
-          </button>
-          <button
-            type="button"
-            onClick={() => void revealInSystem()}
-            disabled={selectedEntry === null || selectedCount !== 1}
-          >
-            在资源管理器中定位
-          </button>
-          <button
-            type="button"
-            onClick={() => void copyPaths()}
-            disabled={selectedCount === 0}
-            title={selectedCount <= 1 ? '复制该条目相对路径' : `复制所选 ${selectedCount} 个条目相对路径`}
-          >
-            复制路径{selectedCount > 1 ? `（${selectedCount}）` : ''}
-          </button>
-          <button type="button" onClick={() => onOpenTerminalAt(terminalDirectory)}>
-            在此目录新建终端
-          </button>
+          <div className="split-button">
+            <button
+              type="button"
+              onClick={() => void createNewEntry('file', targetDirectory)}
+              disabled={!trusted || operationBusy}
+              title={trusted ? `在「${whereLabel}」中新建空文件` : '请先信任项目，才能执行文件操作'}
+            >
+              新建文件
+            </button>
+            <button
+              type="button"
+              className="split-caret"
+              aria-haspopup="menu"
+              aria-label="新建选项"
+              title="选择新建文件或新建文件夹"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setMenu({
+                  x: Math.round(rect.left),
+                  y: Math.round(rect.bottom + 4),
+                  returnFocusTo: event.currentTarget,
+                  items: [
+                    {
+                      id: 'new-file',
+                      label: '新建文件',
+                      disabled: !trusted,
+                      title: writeTitle ?? `在「${whereLabel}」中新建空文件`,
+                      onSelect: () => void createNewEntry('file', targetDirectory)
+                    },
+                    {
+                      id: 'new-directory',
+                      label: '新建文件夹',
+                      disabled: !trusted,
+                      title: writeTitle ?? `在「${whereLabel}」中新建空文件夹`,
+                      onSelect: () => void createNewEntry('directory', targetDirectory)
+                    }
+                  ]
+                })
+              }}
+            >
+              ▾
+            </button>
+          </div>
         </div>
       </div>
 
@@ -971,6 +1193,12 @@ export function FileBrowser({
           aria-multiselectable="true"
           onKeyDown={handleTreeKeyDown}
           style={{ width: paneWidth }}
+          // 右键空白处：开「当前目录」菜单（新建／粘贴／刷新）
+          onContextMenu={(event) => {
+            if (event.target instanceof Element && event.target.closest('.tree-row') !== null) return
+            event.preventDefault()
+            openBlankMenu(event.clientX, event.clientY, null)
+          }}
         >
           <div className="tree-head">
             <span className="col-name">名称</span>
@@ -1012,6 +1240,11 @@ export function FileBrowser({
                 tabIndex={(cursorPath ?? focusableRows[0]?.entry.relativePath) === entry.relativePath ? 0 : -1}
                 title={tooltipFor(entry)}
                 onFocus={() => setCursorPath(entry.relativePath)}
+                // 右键条目：先按需选中，再按光标位置开该条目的菜单
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  openMenuForEntry(entry, event.clientX, event.clientY, event.currentTarget)
+                }}
               >
                 {entry.kind === 'directory' ? (
                   <button
@@ -1091,6 +1324,8 @@ export function FileBrowser({
           )}
         </div>
       </div>
+
+      {menu !== null ? <ContextMenu state={menu} onClose={() => setMenu(null)} /> : null}
     </div>
   )
 }

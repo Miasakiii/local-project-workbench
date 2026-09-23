@@ -20,6 +20,8 @@ interface ProjectPageProps {
   onTerminalRunningChange: (projectId: string, running: boolean) => void
   /** 终端默认 Shell（应用级偏好，来自设置页）；空串=按本机自动探测 */
   defaultShell: string
+  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（设置页承载，G3b） */
+  editorPath: string | null
 }
 
 const NAV_ITEMS: Array<{ key: ProjectPageName; label: string; hint: string }> = [
@@ -73,7 +75,8 @@ export function ProjectPage({
   onBack,
   onProjectChange,
   onTerminalRunningChange,
-  defaultShell
+  defaultShell,
+  editorPath
 }: ProjectPageProps): React.JSX.Element {
   const [page, setPage] = useState<ProjectPageName>('overview')
   const [filePath, setFilePath] = useState('')
@@ -409,6 +412,7 @@ export function ProjectPage({
           <FileBrowser
             projectId={project.id}
             trusted={project.trusted}
+            editorPath={editorPath}
             initialPath={filePath}
             paneWidth={filesPaneWidth}
             refreshToken={changeToken}

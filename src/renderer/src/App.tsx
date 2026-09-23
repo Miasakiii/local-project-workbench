@@ -325,6 +325,7 @@ export default function App(): React.JSX.Element {
                   onProjectChange={handleProjectChange}
                   onTerminalRunningChange={handleTerminalRunningChange}
                   defaultShell={defaultShell}
+                  editorPath={editorPath}
                 />
               </div>
             )

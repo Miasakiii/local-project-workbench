@@ -77,6 +77,34 @@
   flex-wrap: wrap;
 }
 
+/* 「新建 ▾」分裂按钮：主区一键新建文件，箭头列出两种新建目标 */
+.split-button {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.split-button > button {
+  border-radius: 0;
+}
+
+.split-button > button:first-child {
+  border-top-left-radius: var(--radius-xs);
+  border-bottom-left-radius: var(--radius-xs);
+}
+
+.split-button > button:last-child {
+  border-top-right-radius: var(--radius-xs);
+  border-bottom-right-radius: var(--radius-xs);
+  border-left: none;
+  padding: 4px 7px;
+  color: var(--text-2);
+}
+
+.split-button > button:last-child:hover:not(:disabled) {
+  color: var(--text);
+}
+
 .browser-split {
   flex: 1;
   min-height: 0;

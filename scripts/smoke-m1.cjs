@@ -1253,6 +1253,33 @@ function runChild() {
         label.click()
         return true
       })()`)
+    /** 右键某一行：文件栏动作下沉后，条目操作一律走右键上下文菜单 */
+    const rightClickTreeEntry = async (name) =>
+      evaluate(`(() => {
+        const row = [...document.querySelectorAll('.tree-row')]
+          .find((item) => (item.getAttribute('title') || '').startsWith(${JSON.stringify(name)}))
+        if (!row) return false
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 }))
+        return true
+      })()`)
+    /** 点击已开菜单里的某一项；禁用项视为不可用（与真实用户的可用性一致）。
+     *  精确匹配：否则「复制」会先命中「复制路径」这类前缀同类项。 */
+    const clickMenuItem = async (text) =>
+      evaluate(`(() => {
+        const item = [...document.querySelectorAll('.context-menu [role="menuitem"]')]
+          .find((node) => {
+            const label = node.textContent.trim()
+            return label === ${JSON.stringify(text)} || label.startsWith(${JSON.stringify(`${text}（`)})
+          })
+        if (!item || item.disabled) return false
+        item.click()
+        return true
+      })()`)
+    const menuLabels = () =>
+      evaluate(
+        `[...document.querySelectorAll('.context-menu [role="menuitem"]')].map((item) => item.textContent.trim())`
+      )
+
     await evaluate(`(() => { window.prompt = () => 'ui-created.txt'; return true })()`)
     const createClicked = await clickToolbarButton('新建文件')
     const createdVisible = await waitFor(`document.querySelectorAll('.tree-label .name').length > 0 &&
@@ -1263,26 +1290,101 @@ function runChild() {
       `点击=${String(createClicked)} 可见=${String(createdVisible)}`
     )
 
+    // 右键文件：菜单覆盖原先工具栏上的全部条目动作
+    const fileMenuOpened = await rightClickTreeEntry('ui-created.txt')
+    const fileMenuItems = await menuLabels()
+    record(
+      '右键文件开出上下文菜单且覆盖条目动作',
+      fileMenuOpened === true &&
+        [
+          '预览',
+          '用默认程序打开',
+          '用指定编辑器打开',
+          '复制路径',
+          '在资源管理器中定位',
+          '在所在目录新建终端',
+          '复制',
+          '剪切',
+          '重命名',
+          '删除'
+        ].every((label) => fileMenuItems.includes(label)),
+      `菜单项=${fileMenuItems.join(' / ')}`
+    )
+    // Esc 关闭并把焦点还给触发行（a11y 不变量）
+    const menuEscaped = await (async () => {
+      const rowFocused = await evaluate(`(() => {
+        const row = [...document.querySelectorAll('.tree-row')]
+          .find((item) => (item.getAttribute('title') || '').startsWith('ui-created.txt'))
+        if (!(row instanceof HTMLElement)) return false
+        row.focus()
+        return document.activeElement === row
+      })()`)
+      if (rowFocused !== true) return false
+      await evaluate(`document.querySelector('.context-menu')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`)
+      await sleep(150)
+      const after = await evaluate(`(() => ({
+        menu: document.querySelectorAll('.context-menu').length,
+        active: document.activeElement?.getAttribute('title') ?? null
+      }))()`)
+      return after.menu === 0 && String(after.active).startsWith('ui-created.txt')
+    })()
+    record('Esc 关闭右键菜单并把焦点还给触发行', menuEscaped === true, `焦点还原=${String(menuEscaped)}`)
+
+    // 键盘等价键：Shift+F10 在焦点行上开出同一套菜单
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll('.tree-row')]
+        .find((item) => (item.getAttribute('title') || '').startsWith('ui-created.txt'))
+      if (row instanceof HTMLElement) row.focus()
+    })()`)
+    const keyboardMenu = await evaluate(`(() => {
+      const row = [...document.querySelectorAll('.tree-row')]
+        .find((item) => (item.getAttribute('title') || '').startsWith('ui-created.txt'))
+      if (!row) return false
+      row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+      return true
+    })()`)
+    const keyboardMenuLabels = await menuLabels()
+    record(
+      'Shift+F10 可开出同一套右键菜单（键盘等价）',
+      keyboardMenu === true && keyboardMenuLabels.includes('重命名'),
+      `菜单项数=${keyboardMenuLabels.length}`
+    )
+    await evaluate(`(() => {
+      document.querySelector('.context-menu')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })()`)
+    await sleep(120)
+
     await evaluate(`(() => { window.prompt = () => 'ui-renamed.txt'; return true })()`)
-    const renameClicked = await clickToolbarButton('重命名')
+    const renameClicked = await (async () => {
+      await rightClickTreeEntry('ui-created.txt')
+      return await clickMenuItem('重命名')
+    })()
     const renamedVisible = await waitFor(`([...document.querySelectorAll('.tree-label .name')]
       .some((item) => item.textContent.trim() === 'ui-renamed.txt'))`)
     record(
-      '界面重命名入口可用',
+      '右键菜单重命名入口可用',
       renameClicked === true && renamedVisible === true,
       `点击=${String(renameClicked)} 可见=${String(renamedVisible)}`
     )
 
     const copySourceSelected = await clickTreeEntry('ui-renamed.txt')
-    const copyClicked = await clickToolbarButton('复制')
+    const copyClicked = await (async () => {
+      await rightClickTreeEntry('ui-renamed.txt')
+      return await clickMenuItem('复制')
+    })()
     const targetSelectedForCopy = await clickTreeEntry('target')
-    const pasteCopyClicked = await clickToolbarButton('粘贴')
+    const pasteCopyClicked = await (async () => {
+      await rightClickTreeEntry('target')
+      return await clickMenuItem('粘贴')
+    })()
     const copiedVisible = await waitFor(
       `document.querySelectorAll('.tree-row[title*="target/ui-renamed.txt"]').length > 0`,
       2500
     )
     record(
-      '界面复制粘贴入口可用',
+      '右键菜单复制粘贴入口可用',
       copySourceSelected === true &&
         copyClicked === true &&
         targetSelectedForCopy === true &&
@@ -1302,12 +1404,18 @@ function runChild() {
     const cutCreated = await waitFor(`([...document.querySelectorAll('.tree-label .name')]
       .some((item) => item.textContent.trim() === 'ui-cut.txt'))`)
     const cutSourceSelected = await clickTreeEntry('ui-cut.txt')
-    const cutClicked = await clickToolbarButton('剪切')
+    const cutClicked = await (async () => {
+      await rightClickTreeEntry('ui-cut.txt')
+      return await clickMenuItem('剪切')
+    })()
     const targetSelectedForCut = await clickTreeEntry('target')
-    const pasteCutClicked = await clickToolbarButton('粘贴')
+    const pasteCutClicked = await (async () => {
+      await rightClickTreeEntry('target')
+      return await clickMenuItem('粘贴')
+    })()
     const cutMoved = await waitFor(`document.querySelectorAll('.tree-row[title*="target/ui-cut.txt"]').length > 0`)
     record(
-      '界面剪切粘贴入口可用',
+      '右键菜单剪切粘贴入口可用',
       createCutClicked === true &&
         cutCreated === true &&
         cutSourceSelected === true &&
@@ -1320,11 +1428,14 @@ function runChild() {
 
     await evaluate(`(() => { window.confirm = () => true; return true })()`)
     const deleteTargetSelected = await clickTreeEntry('ui-cut.txt')
-    const deleteClicked = await clickToolbarButton('删除')
+    const deleteClicked = await (async () => {
+      await rightClickTreeEntry('ui-cut.txt')
+      return await clickMenuItem('删除')
+    })()
     const deleted = await waitFor(`!([...document.querySelectorAll('.tree-label .name')]
       .some((item) => item.textContent.trim() === 'ui-cut.txt'))`)
     record(
-      '界面删除入口可用且进入回收站流程',
+      '右键菜单删除入口可用且进入回收站流程',
       deleteTargetSelected === true && deleteClicked === true && deleted === true,
       `选择=${String(deleteTargetSelected)} 删除=${String(deleteClicked)} 已移除=${String(deleted)}`
     )
