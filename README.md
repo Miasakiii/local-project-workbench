@@ -137,6 +137,7 @@ Ctrl+\`、会话存在即自动展开、可全屏，**只揭示既有会话、�
 ```
 .
 ├─ README.md
+├─ LICENSE                 MIT 许可证
 ├─ package.json            工程、依赖与验证入口
 ├─ biome.json              静态检查与格式化配置（Biome）
 ├─ electron.vite.config.ts 构建配置
@@ -477,5 +478,11 @@ npm run smoke:m1             # 端到端（真实 Electron，需先构建）
 
 - 设计讨论稿中未列入「已确认需求」的内容均为**设计建议，而非冻结需求**。
 - 已确认项的变更须出新版本并记录理由，不直接修改历史版本。
-- 文档同时保留 Markdown 源与 DOCX 交付稿；**Markdown 为可编辑基线**，DOCX 为对外交付快照。
+- 设计讨论稿以 **Markdown 为唯一基线**留存于仓库；对外交付用的 DOCX 稿不进入仓库，按需另行生成。
 - 仓库行尾统一为 LF（见 `.gitattributes`）。
+
+---
+
+## 许可证
+
+本项目以 [MIT License](LICENSE) 开源。

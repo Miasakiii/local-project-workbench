@@ -4,7 +4,7 @@
   "private": true,
   "description": "本地项目工作台 — 让每个本地项目拥有一个可阅读、可操作、可继续工作的首页",
   "author": "miasakii",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
