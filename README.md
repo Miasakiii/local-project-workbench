@@ -51,7 +51,8 @@ Ctrl+\`、会话存在即自动展开、可全屏，**只揭示既有会话、�
 | 已完成 | **验收场景 10（C09）**：「恢复上次项目」开关，默认关闭；开启后重启直接进入上次项目，恢复不了时说明原因 |
 | 已完成 | **§ 12 G1**：网络图片按项目授权，默认不加载；已授权者由主进程代取并复核后转 data URL |
 | 已完成 | **界面重构三项**：文件栏右键化 / 侧边栏设置入口+设置页 / 终端主角化（推进计划 § 13，分四阶段落地并各自回归） |
-| 进行中 | M3-5 Windows 分发与完整回归：安装包真实体积未实测、真实 ACL 拒绝删除未补测 |
+| 已完成 | M3-5 分发实测（2026-09-23）：`pack:win` 生成 NSIS 安装包 **99.9 MB**，无人值守安装／静默卸载／用户数据保留／安装目录上 9/9 项产物验证全部通过 |
+| 进行中 | M3-5 余项：真实 ACL 拒绝删除未补测 |
 | 未落地 | 设计稿「设计建议」层余 8 项（推进计划 § 12 G2–G9）：界面入口缺失或刻意取舍，不影响 C01–C10 与 10 项验收场景 |
 | 已确认 | 安装包体积**无硬性上限**（2026-09-19 确认）：维持 Electron，D1 重评触发条件不再适用；M3-5 只做常规裁剪 |
 | 已确认 | 真实桌面人工验收已于 2026-09-21 完成：界面渲染、右键菜单、设置页、终端主角化、模态焦点与键盘可达均通过 |
@@ -359,7 +360,7 @@ Biome 自带解析器、不依赖 `typescript` 包，可一并承担静态检查
 | Electron 语言包 | 49 MB（55 个） | 1.1 MB（2 个） | 界面为简体中文，保留 zh-CN / en-US |
 | 已被 Vite 打包的前端依赖 | 17 MB | 0 | react / react-dom / xterm 已进 `out/renderer`，故移至 devDependencies |
 
-**实测结果：解包 327.9 MB**（未裁剪时的投影值为 398.9 MB）。
+**实测结果：解包 326.8 MB、NSIS 安装包 99.9 MB**（未裁剪时的投影值为 398.9 MB；数据为 2026-09-23 `pack:win` 实测）。
 
 体积构成（实测）：
 
@@ -404,7 +405,7 @@ npm run pack:dir         # 打出未压缩安装目录到 release/win-unpacked
 npm run measure:pack     # 测量真实产物体积与构成
 npm run verify:packaged  # 在打包产物上做端到端验证（CDP 驱动）
 npm run verify:release   # 上面三步串起来
-npm run pack:win         # 生成 NSIS 安装包（需 NSIS 工具链）
+npm run pack:win         # 生成 NSIS 安装包（本机已实测可跑通，产物约 100 MB）
 ```
 
 **打包产物的验证方式：** `verify:packaged` 用远程调试协议（CDP）从外部驱动打包后的应用，
@@ -413,12 +414,39 @@ npm run pack:win         # 生成 NSIS 安装包（需 NSIS 工具链）
 样式表从 asar 加载、项目库与文件树可用、**裁剪后的 node-pty 确实可用**（实际拉起
 交互式 shell 并收到输出）、中文文案正常、无致命错误输出。
 
-**安装包体积尚未实测。** `npm run pack:win` 在本机跑不通，原因不在项目配置：
-electron-builder 在 Windows 上会用 PowerShell 包装包管理器调用来收集生产依赖
-（`app-builder-lib` 的 `nodeModulesCollector`），本机环境不允许该派生，依赖树收集
-因此拿不到任何输出而失败。按已实测的压缩比（gzip 41.9%）推算，安装包约
-**135–140 MB**——这是投影值而非实测值，需在可正常派生 PowerShell 的机器上执行
-`npm run pack:win` 确认。
+**安装包体积已实测：99.9 MB**（`本地项目工作台-0.1.0-setup.exe`，104,759,060 字节，
+另附 0.1 MB 的 `.blockmap`）。2026-09-23 在本机执行 `pack:win` 完成，压缩比 326.8 MB → 99.9 MB
+（约 30.6%），**比此前按 gzip 41.9% 推算的 135–140 MB 小约 35 MB**——LZMA 极限压缩对
+asar 与 Electron 运行时的重复内容收益高于早期采样。
+
+> 更正一处过时记录：此前此处写「`pack:win` 在本机跑不通，因为环境不允许 electron-builder
+> 派生 PowerShell 收集依赖树」。实测 electron-builder 26.15.3 的实现改为直接 spawn
+> `powershell.exe -EncodedCommand`（不再 spawn `npm.cmd`），本环境可以派生，因此该命令可用。
+> 早前的失败结论对应的是更早的 electron-builder 行为，已在此更正。
+
+安装与卸载也已实测（per-user 安装、`oneClick: false`、可改安装目录）：
+
+```bash
+# 无人值守安装：/S 静默，/D 指定绝对路径
+release/本地项目工作台-0.1.0-setup.exe /S /D=F:\sud\local-project-workbench
+
+# 静默卸载（安装目录内）
+"Uninstall 本地项目工作台.exe" /S
+```
+
+三条实测结论：
+1. **无人值守安装约 1–2 分钟**（解压 100 MB LZMA + 复制约 330 MB），完成后 20 个顶层条目齐全，
+   `app.asar`／`node-pty` 原生产物（只剩 `win32-x64` 与 ConPTY 运行时）／`locales`（只剩 zh-CN、en-US）都在。
+   ⚠️ `/D` 的路径**不能带引号**——带引号会创建空目录后静默失败（实测）。
+2. **静默卸载退出码 0，安装目录被完整删除**；用户数据目录（`%APPDATA%\local-project-workbench`）
+   **保留**（`deleteAppDataOnUninstall: false` 生效，用标记文件实测）。
+3. **在真实安装目录上跑 `verify:packaged` 9/9 通过**：启动渲染、预加载白名单、沙箱完整、
+   样式表从 asar 加载、项目库与文件树、**裁剪后的 node-pty 真拉交互式 shell 并收到输出**、
+   中文文案正常、无致命错误。
+   `node scripts/verify-packaged.cjs --dir=F:\sud\local-project-workbench`
+
+仍缺产品资源：安装包与窗口使用默认 Electron 图标（`buildResources` 未提供 `icon.ico`），
+属设计资源缺口，非配置疏漏。
 
 ---
 
