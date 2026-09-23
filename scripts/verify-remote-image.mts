@@ -8,6 +8,7 @@
  *   - 响应复核：状态码、Content-Type 白名单（SVG 明确拒绝）、类型归一、体积上限、空响应、魔数嗅探
  *   - 重定向：手动逐跳；跳到内网/非 http/未授权域名一律拦下并**不再次连接**；跳授权域名内其它主机放行；超上限停止
  *   - 重绑定闭合（R10）：连接用的 IP 即已校验的那个公网 IP（不出现第二次独立解析）
+ *   - 真实 lookup 回调契约：固定 IP 建连同时满足 Node 的 all 模式与单地址模式两种约定
  *   - 不变量：除 `ok` 以外所有分支的 dataUrl 必须为 null；`ok` 时只可能是 data: 前缀
  *
  * 网络经 `deps.requestImpl` 注入（生产为 node:http(s) 固定 IP 实现），不发真实请求、不依赖显示会话。
@@ -16,7 +17,15 @@
  *   node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-remote-image.mts
  */
 
-import { REMOTE_IMAGE_LIMIT_BYTES, readRemoteImage } from '../src/main/modules/remote-image.ts'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { isIP } from 'node:net'
+import {
+  fixedIpLookup,
+  nodeRequest,
+  REMOTE_IMAGE_LIMIT_BYTES,
+  readRemoteImage
+} from '../src/main/modules/remote-image.ts'
 
 interface Check {
   name: string
@@ -151,6 +160,23 @@ function chunk(size: number, seed: number): Uint8Array {
 }
 
 const PUBLIC_PNG = { headers: { 'content-type': 'image/png' } } as const
+
+/**
+ * 以指定 dns 选项调用固定 IP lookup，记录回调收到的前两个参数。
+ * 模拟 Node 对自定义 lookup 的两种调用姿势：`{ all: true }`（all 模式）与 `{}`（单地址模式）。
+ */
+function captureLookup(
+  lookup: ReturnType<typeof fixedIpLookup>,
+  dnsOptions: { all?: boolean }
+): { error: unknown; firstArg: unknown; secondArg: unknown } {
+  const captured = { error: null as unknown, firstArg: undefined as unknown, secondArg: undefined as unknown }
+  lookup('img.example', dnsOptions, (err: unknown, ...rest: unknown[]) => {
+    captured.error = err
+    captured.firstArg = rest[0]
+    captured.secondArg = rest[1]
+  })
+  return captured
+}
 
 /* ---------- 主流程 ---------- */
 
@@ -400,8 +426,10 @@ async function main(): Promise<void> {
 
     const hung = await withFake({ hangUntilAbort: true }, 'https://slow.example/a.png', true, [], 20)
     check(
-      '超过时限即中止并归为不可达',
-      hung.result.status === 'unreachable' && hung.result.dataUrl === null,
+      '超过时限即中止并归为不可达，且给出可读的超时说明',
+      hung.result.status === 'unreachable' &&
+        hung.result.dataUrl === null &&
+        /未完成/.test(String(hung.result.message)),
       `status=${hung.result.status} 消息=${String(hung.result.message)}`
     )
   }
@@ -602,6 +630,101 @@ async function main(): Promise<void> {
       '重定向每一跳都用固定 IP 连接',
       perHop.result.status === 'ok' && perHop.ips.length === 2 && perHop.ips.every((ip) => ip === '93.184.216.34'),
       `各跳连接 IP=${perHop.ips.join(' , ')}`
+    )
+  }
+
+  /* ---------- 真实 lookup 回调契约（固定 IP 建连的 Node 约定） ---------- */
+
+  // 背景：生产传输把连接固定到已校验 IP 靠的是 node:http(s) 的 lookup 选项。Node ≥20 默认
+  // 开启 autoSelectFamily——未显式指定 family 时 net 走 lookupAndConnectMultiple，以 **all
+  // 模式**调用自定义 lookup（约定为地址数组）；显式指定 family 时才是单地址约定。此前只
+  // 实现了单地址约定，真实联网时 Node 把字符串按数组逐项解构、拿到 undefined 后抛
+  // ERR_INVALID_IP_ADDRESS——注入 mock 传输层的既有断言覆盖不到这条路，故在此直接对
+  // 生产导出的 fixedIpLookup 断言两种约定，且镜像 Node 自身的校验条件（isIP 与 family）。
+  for (const [label, ip, family] of [
+    ['IPv4', '93.184.216.34', 4],
+    ['IPv6', '2606:2800:220:1:248:1893:25c8:1946', 6]
+  ] as const) {
+    const lookup = fixedIpLookup(ip, family)
+
+    const allMode = captureLookup(lookup, { all: true })
+    const addresses = allMode.firstArg as Array<{ address: string; family: number }>
+    check(
+      `${label}：all 模式回调返回地址数组（Node ≥20 autoSelectFamily 默认路径）`,
+      allMode.error === null &&
+        Array.isArray(addresses) &&
+        addresses.length === 1 &&
+        addresses[0]?.address === ip &&
+        addresses[0]?.family === family,
+      `数组=${JSON.stringify(addresses)}`
+    )
+    check(
+      `${label}：all 模式地址通过 Node 自身校验（isIP 结果即 family）`,
+      isIP(addresses[0]?.address ?? '') === family,
+      `isIP=${isIP(addresses[0]?.address ?? '')} family=${family}`
+    )
+
+    const single = captureLookup(lookup, {})
+    check(
+      `${label}：单地址模式回调返回 (ip, family)（显式 family 路径）`,
+      single.error === null && single.firstArg === ip && single.secondArg === family,
+      `ip=${String(single.firstArg)} family=${String(single.secondArg)}`
+    )
+  }
+
+  /* ---------- 真实传输契约（本地服务器驱动生产 nodeRequest） ---------- */
+
+  // mock 传输层（deps.requestImpl）覆盖不到「请求真的发了出去」这类问题——漏 request.end()
+  // 与 lookup 的 all 模式约定都只在真实联网时暴露。这里用本地 HTTP 服务器驱动**生产实现**
+  // nodeRequest（含固定 IP 的 lookup 全流程），断言请求到达服务器且响应完整回传。
+  // 127.0.0.1 在此是受控目标而非不可信地址：私网拦截在 readRemoteImage 一层另行断言。
+  {
+    const received: { method: string | null; url: string | null; accept: string | null } = {
+      method: null,
+      url: null,
+      accept: null
+    }
+    const payload = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
+    const server = createServer((req, res) => {
+      received.method = req.method ?? null
+      received.url = req.url ?? null
+      received.accept = (req.headers['accept'] as string | undefined) ?? null
+      res.writeHead(200, { 'content-type': 'image/png', 'x-remote-test': 'ok' })
+      res.end(Buffer.from(payload))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+
+    const controller = new AbortController()
+    const transportTimer = setTimeout(() => controller.abort(), 5000)
+    let transportError: string | null = null
+    let response: Response | null = null
+    try {
+      response = await nodeRequest(`http://127.0.0.1:${port}/probe.png`, {
+        signal: controller.signal,
+        ip: '127.0.0.1'
+      })
+    } catch (error) {
+      transportError = error instanceof Error ? `${error.code ?? ''} ${error.message}` : String(error)
+    }
+    clearTimeout(transportTimer)
+    const body = response === null ? null : new Uint8Array(await response.arrayBuffer())
+    server.close()
+
+    check(
+      '真实传输把请求发到服务器（固定 IP lookup 全流程，且请求已 end）',
+      transportError === null && received.method === 'GET' && received.url === '/probe.png' && received.accept !== null,
+      transportError ?? `${received.method} ${received.url} accept=${received.accept}`
+    )
+    check(
+      '真实传输回传状态、响应头与字节',
+      response?.status === 200 &&
+        response.headers.get('content-type') === 'image/png' &&
+        response.headers.get('x-remote-test') === 'ok' &&
+        body !== null &&
+        body.length === payload.length &&
+        Array.from(body).every((byte, index) => byte === payload[index]),
+      `status=${String(response?.status)} bytes=${body === null ? 'null' : body.length}/${payload.length}`
     )
   }
 

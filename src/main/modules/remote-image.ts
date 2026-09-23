@@ -244,21 +244,46 @@ async function readBodyCapped(response: Response, limit: number): Promise<{ byte
 }
 
 /**
+ * 固定连接 IP 的 `lookup` 回调（供 `node:http(s)` 的 `lookup` 选项使用）。
+ *
+ * 两条调用约定都要满足，缺一不可：
+ *
+ * - **all 模式**（`dnsOptions.all === true`）：Node ≥ 20 默认开启 `autoSelectFamily`，
+ *   未显式指定 family 时走 `lookupAndConnectMultiple`——约定是
+ *   `callback(err, [{ address, family }, …])` **地址数组**；
+ * - **单地址模式**：显式指定 family 时约定 `callback(err, ip, family)`。
+ *
+ * 此前只实现了单地址约定，all 模式下 Node 把字符串按数组逐项解构，拿到 `undefined`
+ * 后抛 `ERR_INVALID_IP_ADDRESS: Invalid IP address: undefined`——真实联网时才暴露
+ * （注入 mock 传输层的验证覆盖不到这条路）。这里按 `dnsOptions.all` 分流；
+ * 无论走哪条路径，最终都只连到那一个**已校验**的公网 IP。
+ */
+export function fixedIpLookup(ip: string, family: 4 | 6) {
+  const address = { address: ip, family }
+  return (_hostname: string, dnsOptions: { all?: boolean }, callback: unknown): void => {
+    const emit = callback as (err: null, ...args: unknown[]) => void
+    if (dnsOptions.all === true) emit(null, [address])
+    else emit(null, ip, family)
+  }
+}
+
+/**
  * 零依赖的生产传输：用 `node:http(s)` 发起一次请求，**连接固定到 `ip`**（`lookup` 回填），
  * 从而不再发生第二次独立的域名解析（闭合 DNS 重绑定）。`Host` 与 TLS `servername` 仍取
  * 自 URL 的域名，证书按名校验不变。`accept-encoding: identity` 让服务端不回压缩，体积上限
  * 与字节一致。不跟随重定向——由调用方逐跳处理。
+ *
+ * 导出以供验证脚本驱动真实传输：mock 传输层覆盖不到「请求真的发了出去」这类问题
+ * （曾漏 `request.end()` 与 lookup 的 all 模式约定，均只在真实联网时暴露）。
  */
-const nodeRequest: RemoteImageTransport = (url, { signal, ip }) =>
+export const nodeRequest: RemoteImageTransport = (url, { signal, ip }) =>
   new Promise<Response>((resolve, reject) => {
     const parsed = new URL(url)
     const family = ip.includes(':') ? 6 : 4
     const options: import('node:http').RequestOptions = {
       method: 'GET',
       signal,
-      lookup: (_hostname, _options, callback) => {
-        callback(null, ip, family)
-      },
+      lookup: fixedIpLookup(ip, family) as unknown as import('node:net').LookupFunction,
       headers: {
         accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/bmp,image/x-icon,*/*;q=0.5',
         'accept-encoding': 'identity'
@@ -281,6 +306,9 @@ const nodeRequest: RemoteImageTransport = (url, { signal, ip }) =>
     const request =
       parsed.protocol === 'https:' ? httpsRequest(url, options, onResponse) : httpRequest(url, options, onResponse)
     request.on('error', reject)
+    // 必须显式 end()：http(s).request 不像 .get 那样自动发送，漏掉它请求字节永远不会
+    // 写出——表现为 TLS 握手成功后一直没有响应直到超时。导出供验证脚本驱动真实传输。
+    request.end()
   })
 
 /**
@@ -403,10 +431,16 @@ export async function readRemoteImage(
       message: null
     }
   } catch (error) {
+    // 超时走 AbortSignal：Node 会把原因替换成晦涩的 "The operation was aborted"，
+    // 这里按「signal 已触发」还原为可读的超时说明；其余异常保留原始原因。
+    const abortedByTimeout = controller.signal.aborted
+    const limit = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)} 秒` : `${timeoutMs} 毫秒`
     return {
       ...result,
       status: 'unreachable',
-      message: `无法取得该图片：${error instanceof Error ? error.message : String(error)}`
+      message: abortedByTimeout
+        ? `请求超过 ${limit} 未完成，未加载。`
+        : `无法取得该图片：${error instanceof Error ? error.message : String(error)}`
     }
   } finally {
     clearTimeout(timer)
