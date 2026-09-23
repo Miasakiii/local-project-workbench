@@ -1,5 +1,6 @@
 import type { ProjectSummary } from '@shared/types'
 import { useMemo, useState } from 'react'
+import { GearIcon } from './icons'
 
 interface ProjectSidebarProps {
   open: boolean
@@ -10,9 +11,12 @@ interface ProjectSidebarProps {
   openProjectIds: string[]
   /** 有终端会话正在运行的项目 */
   runningProjectIds: string[]
+  /** 设置页是否为当前主区域视图；用于点亮左下角的「设置」入口 */
+  settingsOpen: boolean
   onActivate: (projectId: string) => void
   onClose: (projectId: string) => void
   onShowLibrary: () => void
+  onShowSettings: () => void
 }
 
 /** 项目数超过该值时显示筛选框，避免列表过长时找不到目标 */
@@ -44,9 +48,11 @@ export function ProjectSidebar({
   activeProjectId,
   openProjectIds,
   runningProjectIds,
+  settingsOpen,
   onActivate,
   onClose,
-  onShowLibrary
+  onShowLibrary,
+  onShowSettings
 }: ProjectSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
 
@@ -131,14 +137,27 @@ export function ProjectSidebar({
         ) : null}
       </div>
 
-      <button
-        type="button"
-        className={activeProjectId === null ? 'sidebar-library active' : 'sidebar-library'}
-        onClick={onShowLibrary}
-        tabIndex={open ? 0 : -1}
-      >
-        项目库
-      </button>
+      <div className="sidebar-footer">
+        <button
+          type="button"
+          className={activeProjectId === null && !settingsOpen ? 'sidebar-library active' : 'sidebar-library'}
+          onClick={onShowLibrary}
+          tabIndex={open ? 0 : -1}
+        >
+          项目库
+        </button>
+        <button
+          type="button"
+          className={settingsOpen ? 'sidebar-settings active' : 'sidebar-settings'}
+          onClick={onShowSettings}
+          title="应用级设置：编辑器、终端默认 Shell、启动位置与关于"
+          aria-label="打开设置"
+          tabIndex={open ? 0 : -1}
+        >
+          <GearIcon className="gear" />
+          设置
+        </button>
+      </div>
     </aside>
   )
 }

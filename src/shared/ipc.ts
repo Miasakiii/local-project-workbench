@@ -154,12 +154,17 @@ export interface StartupViewResult {
   projectId: string | null
   /** 开关已开启但未能恢复时的说明；其余情况为 null */
   notice: string | null
-  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b），供项目库设置区显示 */
+  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b），供设置页显示 */
   editorPath: string | null
+  /** 终端默认 Shell；空串=按本机自动探测（界面重构三项·阶段 2） */
+  defaultShell: string
 }
 
 export interface UpdateSettingsRequest {
-  restoreLastProject: boolean
+  /** 「恢复上次项目」开关；缺省表示本次不改动该项 */
+  restoreLastProject?: boolean
+  /** 终端默认 Shell（''=自动／pwsh／powershell／cmd，主进程白名单校验）；缺省表示不改动 */
+  defaultShell?: string
 }
 
 /**
@@ -173,6 +178,8 @@ export interface SettingsResult {
   lastProjectId: string | null
   /** 「用指定编辑器打开」所用的编辑器可执行路径；null=尚未设置（设计稿 4.2，G3b） */
   editorPath: string | null
+  /** 终端默认 Shell；空串=自动探测（界面重构三项·阶段 2，设置页承载） */
+  defaultShell: string
 }
 
 /* ---------- 视图状态 ---------- */

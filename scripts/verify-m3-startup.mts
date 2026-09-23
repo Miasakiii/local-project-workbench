@@ -8,6 +8,7 @@
  *   - 恢复判定：开启/关闭、首次启动、上次项目可用、已移除登记、目录不可用五分支
  *   - 与登记表集成：真实目录移动、移除登记、重新定位后的可用性判定
  *   - 边界：恢复不看信任；关闭时不做任何目录查询；偏好只落应用数据目录
+ *   - 终端默认 Shell（界面重构三项·阶段 2）：白名单持久化、非法值回落、局部更新不殃及其它字段
  *
  * 用法：
  *   node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m3-startup.mts
@@ -83,6 +84,7 @@ function main(): void {
       initial.restoreLastProject === false && initial.lastProjectId === null,
       JSON.stringify(initial)
     )
+    check('默认终端 Shell 为空串（自动探测）', initial.defaultShell === '', JSON.stringify(initial))
     check('只读取不会创建 settings.json', !existsSync(settingsPath), `存在=${String(existsSync(settingsPath))}`)
 
     const view = startupViewFor(initial, createRegistry(createRegistryStore(registryPath)))
@@ -131,8 +133,70 @@ function main(): void {
     )
   }
 
-  /* ---------- 读入容错：坏数据一律回退到不恢复 ---------- */
+  /* ---------- 终端默认 Shell：白名单、非法值回落与局部更新 ---------- */
 
+  {
+    const store = freshSettings()
+    for (const shell of ['pwsh', 'powershell', 'cmd']) {
+      store.update({ defaultShell: shell })
+      check(
+        `默认 Shell 可设为 ${shell}`,
+        freshSettings().get().defaultShell === shell,
+        JSON.stringify(freshSettings().get())
+      )
+    }
+
+    store.update({ defaultShell: '' })
+    check('空串表示自动探测', freshSettings().get().defaultShell === '', JSON.stringify(freshSettings().get()))
+
+    // 界面给出的值只是候选：非白名单字符串、大小写变体、带路径的写法、非字符串一律回落
+    const illegal = ['bash', 'pwsh.exe', 'CMD', 'C:\\Windows\\System32\\cmd.exe', ' sh', 42, null, undefined]
+    for (const value of illegal) {
+      store.update({ defaultShell: value as unknown as string })
+      const loaded = freshSettings().get()
+      check(
+        `非法默认 Shell ${JSON.stringify(value)} 回落为自动探测`,
+        loaded.defaultShell === '',
+        JSON.stringify(loaded)
+      )
+    }
+
+    // 局部更新：只改点明的那一项，其余偏好保持原值（设置页每次只提交动过的一项）
+    store.update({ defaultShell: 'pwsh' })
+    store.setRestoreLastProject(true)
+    store.recordActiveProject('project-x')
+    store.setEditorPath('C:\\editors\\code.cmd')
+    const before = store.get()
+    check(
+      '三项偏好可同时存在',
+      before.defaultShell === 'pwsh' && before.restoreLastProject === true && before.editorPath !== null,
+      JSON.stringify(before)
+    )
+
+    store.update({ restoreLastProject: false })
+    const after = freshSettings().get()
+    check(
+      '改开关不动默认 Shell 与编辑器',
+      after.restoreLastProject === false &&
+        after.defaultShell === 'pwsh' &&
+        after.editorPath === 'C:\\editors\\code.cmd',
+      JSON.stringify(after)
+    )
+
+    store.update({ defaultShell: 'cmd' })
+    const afterShell = freshSettings().get()
+    check(
+      '改默认 Shell 不动开关',
+      afterShell.defaultShell === 'cmd' &&
+        afterShell.restoreLastProject === false &&
+        afterShell.lastProjectId === 'project-x',
+      JSON.stringify(afterShell)
+    )
+
+    rmSync(settingsPath, { force: true })
+  }
+
+  /* ---------- 读入容错：坏数据一律回退到不恢复 ---------- */
   {
     writeFileSync(
       settingsPath,
@@ -142,7 +206,7 @@ function main(): void {
     const loaded = freshSettings().get()
     check(
       '非布尔开关值按关闭处理',
-      loaded.restoreLastProject === false && loaded.lastProjectId === null,
+      loaded.restoreLastProject === false && loaded.lastProjectId === null && loaded.defaultShell === '',
       JSON.stringify(loaded)
     )
 
@@ -151,7 +215,9 @@ function main(): void {
     const quarantined = readdirSync(appDataDir).filter((name) => name.includes('settings.json.corrupt-'))
     check(
       'settings.json 损坏时回退为不恢复',
-      afterCorrupt.restoreLastProject === false && afterCorrupt.lastProjectId === null,
+      afterCorrupt.restoreLastProject === false &&
+        afterCorrupt.lastProjectId === null &&
+        afterCorrupt.defaultShell === '',
       JSON.stringify(afterCorrupt)
     )
     check('损坏文件被保留而非静默丢弃', quarantined.length === 1, quarantined.join(', '))
@@ -177,7 +243,12 @@ function main(): void {
   /* ---------- 恢复判定的五个分支 ---------- */
 
   {
-    const settings: SettingsResult = { restoreLastProject: false, lastProjectId: 'p1' }
+    const settings: SettingsResult = {
+      restoreLastProject: false,
+      lastProjectId: 'p1',
+      editorPath: null,
+      defaultShell: ''
+    }
     let lookedUp: string[] = []
     const view = decideStartupView(settings, (projectId) => {
       lookedUp.push(projectId)
@@ -187,20 +258,26 @@ function main(): void {
     check('开关关闭时不查询任何目录', lookedUp.length === 0, `查询次数=${lookedUp.length}`)
     lookedUp = []
 
-    const firstRun = decideStartupView({ restoreLastProject: true, lastProjectId: null }, (projectId) => {
-      lookedUp.push(projectId)
-      return { status: 'available' }
-    })
+    const firstRun = decideStartupView(
+      { restoreLastProject: true, lastProjectId: null, editorPath: null, defaultShell: '' },
+      (projectId) => {
+        lookedUp.push(projectId)
+        return { status: 'available' }
+      }
+    )
     check(
       '首次启动（从未打开过项目）停留项目库且不解释',
       firstRun.projectId === null && firstRun.notice === null && lookedUp.length === 0,
       JSON.stringify(firstRun)
     )
 
-    const restored = decideStartupView({ restoreLastProject: true, lastProjectId: 'p1' }, (projectId) => {
-      lookedUp.push(projectId)
-      return { status: 'available' }
-    })
+    const restored = decideStartupView(
+      { restoreLastProject: true, lastProjectId: 'p1', editorPath: null, defaultShell: '' },
+      (projectId) => {
+        lookedUp.push(projectId)
+        return { status: 'available' }
+      }
+    )
     check(
       '开启且上次项目可用时直接恢复',
       restored.projectId === 'p1' && restored.notice === null,
@@ -212,20 +289,26 @@ function main(): void {
       `查询=${lookedUp.join(',')}`
     )
 
-    const unregistered = decideStartupView({ restoreLastProject: true, lastProjectId: 'p1' }, () => ({
-      status: 'unregistered'
-    }))
+    const unregistered = decideStartupView(
+      { restoreLastProject: true, lastProjectId: 'p1', editorPath: null, defaultShell: '' },
+      () => ({
+        status: 'unregistered'
+      })
+    )
     check(
       '上次项目已移除登记时说明原因',
       unregistered.projectId === null && String(unregistered.notice).includes('不在登记列表'),
       String(unregistered.notice)
     )
 
-    const unavailable = decideStartupView({ restoreLastProject: true, lastProjectId: 'p1' }, () => ({
-      status: 'unavailable',
-      displayName: '甲项目',
-      reason: '目录不存在或不可访问'
-    }))
+    const unavailable = decideStartupView(
+      { restoreLastProject: true, lastProjectId: 'p1', editorPath: null, defaultShell: '' },
+      () => ({
+        status: 'unavailable',
+        displayName: '甲项目',
+        reason: '目录不存在或不可访问'
+      })
+    )
     check(
       '上次项目目录不可用时说明项目与原因',
       unavailable.projectId === null &&

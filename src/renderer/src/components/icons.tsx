@@ -49,6 +49,22 @@ export function ChevronIcon({ className }: IconProps): React.JSX.Element {
   )
 }
 
+/** 设置：齿轮（侧边栏左下角入口） */
+export function GearIcon({ className }: IconProps): React.JSX.Element {
+  return (
+    <svg className={className} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+      <path d="M8 5.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M8 1.6l.7 1.7 1.8-.5.2 1.9 1.8.7-.9 1.6.9 1.6-1.8.7-.2 1.9-1.8-.5L8 14.4l-.7-1.7-1.8.5-.2-1.9-1.8-.7.9-1.6-.9-1.6 1.8-.7.2-1.9 1.8.5z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 /** 侧边栏开关：左侧一块填充矩形表示边栏区域 */
 export function SidebarIcon({ className }: IconProps): React.JSX.Element {
   return (

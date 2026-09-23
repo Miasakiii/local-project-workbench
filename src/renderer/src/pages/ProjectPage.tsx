@@ -18,6 +18,8 @@ interface ProjectPageProps {
   onProjectChange: (project: ProjectSummary) => void
   /** 上报终端会话状态，供侧边栏提示「哪个项目有终端在运行」 */
   onTerminalRunningChange: (projectId: string, running: boolean) => void
+  /** 终端默认 Shell（应用级偏好，来自设置页）；空串=按本机自动探测 */
+  defaultShell: string
 }
 
 const NAV_ITEMS: Array<{ key: ProjectPageName; label: string; hint: string }> = [
@@ -70,7 +72,8 @@ export function ProjectPage({
   onToggleSidebar,
   onBack,
   onProjectChange,
-  onTerminalRunningChange
+  onTerminalRunningChange,
+  defaultShell
 }: ProjectPageProps): React.JSX.Element {
   const [page, setPage] = useState<ProjectPageName>('overview')
   const [filePath, setFilePath] = useState('')
@@ -89,8 +92,6 @@ export function ProjectPage({
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeTabKey, setActiveTabKey] = useState<number | null>(null)
   const tabKeyRef = useRef(1)
-  /** 新建终端使用的 shell；空串=自动探测（G5） */
-  const [selectedShell, setSelectedShell] = useState('')
   /** 头部 Git 状态（G6）：当前分支与变更文件数，只读查询 */
   const [gitSnapshot, setGitSnapshot] = useState<GitSnapshot | null>(null)
   const gitSequenceRef = useRef(0)
@@ -458,15 +459,6 @@ export function ProjectPage({
                   重建会话
                 </button>
               ) : null}
-              <label className="terminal-shell" title="选择新建终端使用的 shell；缺省按本机自动探测">
-                <span className="hint">Shell</span>
-                <select value={selectedShell} onChange={(event) => setSelectedShell(event.target.value)}>
-                  <option value="">自动</option>
-                  <option value="pwsh">pwsh</option>
-                  <option value="powershell">PowerShell</option>
-                  <option value="cmd">cmd</option>
-                </select>
-              </label>
               <button type="button" onClick={() => openTerminalAt('')}>
                 新建标签
               </button>
@@ -531,7 +523,7 @@ export function ProjectPage({
                 projectId={project.id}
                 relativePath={tab.relativePath}
                 visible={terminalOpen && tab.key === activeTabKey}
-                shell={selectedShell}
+                shell={defaultShell}
                 onSessionChange={(sessionId) => updateTab(tab.key, { sessionId })}
               />
             </div>

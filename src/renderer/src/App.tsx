@@ -4,6 +4,7 @@ import { ProjectSidebar } from './components/ProjectSidebar'
 import { useModalFocus } from './hooks/useModalFocus'
 import { LibraryPage } from './pages/LibraryPage'
 import { ProjectPage } from './pages/ProjectPage'
+import { SettingsPage } from './pages/SettingsPage'
 
 const SIDEBAR_PREFERENCE_KEY = 'workbench.sidebarOpen'
 
@@ -50,6 +51,10 @@ export default function App(): React.JSX.Element {
   const [restoreLastProject, setRestoreLastProject] = useState(false)
   /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b） */
   const [editorPath, setEditorPath] = useState<string | null>(null)
+  /** 终端默认 Shell；空串=按本机自动探测（界面重构三项·阶段 2，设置页承载） */
+  const [defaultShell, setDefaultShell] = useState('')
+  /** 设置页是否为当前主区域视图；打开项目仍保持挂载，设置与项目可随时来回切换 */
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const { dialogRef: closeDialogRef } = useModalFocus(pendingCloseProjectId !== null, () =>
     setPendingCloseProjectId(null)
   )
@@ -134,6 +139,7 @@ export default function App(): React.JSX.Element {
     const view = await window.workbench.app.startupView()
     setRestoreLastProject(view.restoreLastProject)
     setEditorPath(view.editorPath)
+    setDefaultShell(view.defaultShell)
     const target = view.projectId
     if (target !== null && list.some((project) => project.id === target)) {
       await activateProject(target)
@@ -147,9 +153,14 @@ export default function App(): React.JSX.Element {
     bootstrap().catch(() => undefined)
   }, [bootstrap])
 
-  const setRestoreLastProjectPreference = useCallback(async (enabled: boolean) => {
-    const saved = await window.workbench.settings.update({ restoreLastProject: enabled })
+  /**
+   * 局部更新应用偏好：只提交动过的那一项，其余字段由主进程保持原值。
+   * 落盘值以主进程返回为准（白名单与序列化都在主进程）。
+   */
+  const updateSettings = useCallback(async (patch: { restoreLastProject?: boolean; defaultShell?: string }) => {
+    const saved = await window.workbench.settings.update(patch)
     setRestoreLastProject(saved.restoreLastProject)
+    setDefaultShell(saved.defaultShell)
   }, [])
 
   /** 打开主进程编辑器选择器并持久化；返回的即最新 editorPath（取消为 null=未设置） */
@@ -213,6 +224,17 @@ export default function App(): React.JSX.Element {
     setSidebarOpen((value) => !value)
   }, [])
 
+  /** 打开设置页：主区域切到设置，但已打开的项目保持挂载（终端会话不受影响） */
+  const showSettings = useCallback(() => {
+    setStartupNotice(null)
+    setSettingsOpen(true)
+  }, [])
+
+  /** 离开设置页：回到项目库或上次查看的项目 */
+  const leaveSettings = useCallback(() => {
+    setSettingsOpen(false)
+  }, [])
+
   /** 终端会话状态由项目页上报；只在真正变化时更新，避免无谓重渲染 */
   const handleTerminalRunningChange = useCallback((projectId: string, running: boolean) => {
     setRunningProjects((current) => (current[projectId] === running ? current : { ...current, [projectId]: running }))
@@ -241,34 +263,54 @@ export default function App(): React.JSX.Element {
           activeProjectId={activeProjectId}
           openProjectIds={openProjectIds}
           runningProjectIds={runningProjectIds}
-          onActivate={(projectId) => void activateProject(projectId)}
+          settingsOpen={settingsOpen}
+          onActivate={(projectId) => {
+            leaveSettings()
+            void activateProject(projectId)
+          }}
           onClose={requestCloseProject}
-          onShowLibrary={() => setActiveProjectId(null)}
+          onShowLibrary={() => {
+            leaveSettings()
+            setActiveProjectId(null)
+          }}
+          onShowSettings={() => void showSettings()}
         />
 
         <div className="app-main">
-          {activeProjectId === null ? (
+          {settingsOpen ? (
+            <SettingsPage
+              info={info}
+              sidebarOpen={sidebarOpen}
+              restoreLastProject={restoreLastProject}
+              editorPath={editorPath}
+              defaultShell={defaultShell}
+              onToggleSidebar={toggleSidebar}
+              onSetRestoreLastProject={(enabled) => void updateSettings({ restoreLastProject: enabled })}
+              onConfigureEditor={() => void configureEditor()}
+              onClearEditor={() => void clearEditor()}
+              onDefaultShellChange={(shell) => void updateSettings({ defaultShell: shell })}
+            />
+          ) : null}
+
+          {activeProjectId === null && !settingsOpen ? (
             <LibraryPage
               projects={projects}
               loading={loading}
               sidebarOpen={sidebarOpen}
-              restoreLastProject={restoreLastProject}
               onToggleSidebar={toggleSidebar}
               onRefresh={refresh}
               onOpenProject={(projectId) => void activateProject(projectId)}
               onRegister={register}
               registerBusy={registerBusy}
-              onSetRestoreLastProject={(enabled) => void setRestoreLastProjectPreference(enabled)}
-              editorPath={editorPath}
-              onConfigureEditor={() => void configureEditor()}
-              onClearEditor={() => void clearEditor()}
             />
           ) : null}
 
           {openProjectIds.map((projectId) => {
             const project = projects.find((item) => item.id === projectId)
             if (project === undefined) return null
-            const isActive = projectId === activeProjectId
+            // 设置页是独立主区域视图：项目保持挂载但退出活动态，
+            // 因此其快捷键不响应、终端面板也不与设置页同时可见。
+            const isActive = !settingsOpen && projectId === activeProjectId
             return (
               <div key={projectId} className={isActive ? 'project-slot' : 'project-slot hidden'}>
                 <ProjectPage
@@ -276,9 +318,13 @@ export default function App(): React.JSX.Element {
                   active={isActive}
                   sidebarOpen={sidebarOpen}
                   onToggleSidebar={toggleSidebar}
-                  onBack={() => setActiveProjectId(null)}
+                  onBack={() => {
+                    leaveSettings()
+                    setActiveProjectId(null)
+                  }}
                   onProjectChange={handleProjectChange}
                   onTerminalRunningChange={handleTerminalRunningChange}
+                  defaultShell={defaultShell}
                 />
               </div>
             )

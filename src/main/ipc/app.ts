@@ -43,12 +43,21 @@ export function registerAppIpc(ctx: IpcContext): void {
       restoreLastProject: settings.restoreLastProject,
       projectId: view.projectId,
       notice: view.notice,
-      editorPath: settings.editorPath
+      editorPath: settings.editorPath,
+      defaultShell: settings.defaultShell
     }
   })
 
+  /**
+   * 局部更新应用偏好。每个字段都缺省即不改动，因此设置页可以只提交用户动过的那一项，
+   * 不必为了改 Shell 把「恢复上次项目」的当前值也回传一遍（回传值可能已过期）。
+   * 白名单与持久化都在 `app-settings.ts`，渲染层给出的值只作候选。
+   */
   ctx.handle(IpcChannel.settingsUpdate, (_event, request: UpdateSettingsRequest): SettingsResult => {
-    const enabled = request !== null && typeof request === 'object' && request.restoreLastProject === true
-    return ctx.settings().setRestoreLastProject(enabled)
+    const patch = request !== null && typeof request === 'object' ? request : {}
+    return ctx.settings().update({
+      restoreLastProject: typeof patch.restoreLastProject === 'boolean' ? patch.restoreLastProject : undefined,
+      defaultShell: typeof patch.defaultShell === 'string' ? patch.defaultShell : undefined
+    })
   })
 }

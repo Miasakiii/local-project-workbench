@@ -361,9 +361,15 @@ function runChild() {
         `settings.json=${JSON.stringify(readSettings())}`
       )
 
-      // 关掉开关，并把关闭状态留给下一次真实启动
+      // 关掉开关，并把关闭状态留给下一次真实启动（开关已迁至设置页）
+      const openedSettings = await evaluate(`(() => {
+        const settings = document.querySelector('.sidebar-settings')
+        if (settings) settings.click()
+        return settings !== null
+      })()`)
+      const settingsForToggleOff = await waitFor(`document.querySelectorAll('.settings-page').length > 0`)
       const toggled = await evaluate(`(() => {
-        const input = document.querySelector('.pref-toggle input[type="checkbox"]')
+        const input = document.querySelector('.settings-page .pref-toggle input[type="checkbox"]')
         if (!input) return 'missing'
         if (input.checked) input.click()
         return 'off'
@@ -372,8 +378,12 @@ function runChild() {
       const afterDisable = readSettings()
       record(
         '关闭开关后持久化为关闭',
-        toggled === 'off' && afterDisable !== null && afterDisable.restoreLastProject === false,
-        `界面=${String(toggled)} settings.json=${JSON.stringify(afterDisable)}`
+        openedSettings === true &&
+          settingsForToggleOff === true &&
+          toggled === 'off' &&
+          afterDisable !== null &&
+          afterDisable.restoreLastProject === false,
+        `设置页=${String(settingsForToggleOff)} 界面=${String(toggled)} settings.json=${JSON.stringify(afterDisable)}`
       )
       return
     }
@@ -431,6 +441,18 @@ function runChild() {
       return
     }
 
+    // 界面交互用的三个小工具：统一在这里定义，供后续各段使用
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const evaluate = (source) => window.webContents.executeJavaScript(source)
+    const waitFor = async (source, timeoutMs = 6000) => {
+      const started = Date.now()
+      while (Date.now() - started < timeoutMs) {
+        if (await evaluate(source)) return true
+        await sleep(150)
+      }
+      return false
+    }
+
     const surface = await window.webContents.executeJavaScript(`(() => ({
       hasWorkbench: typeof window.workbench === 'object' && window.workbench !== null,
       projectList: typeof window.workbench?.project?.list,
@@ -480,19 +502,101 @@ function runChild() {
       library: document.querySelectorAll('.library-page').length,
       projects: document.querySelectorAll('.project-slot').length,
       notice: document.querySelectorAll('.inline-notice.banner').length,
-      toggle: document.querySelectorAll('.pref-toggle input[type="checkbox"]').length,
-      checked: document.querySelector('.pref-toggle input[type="checkbox"]')?.checked ?? null
+      settingsEntry: document.querySelectorAll('.sidebar-settings').length,
+      libraryToggles: document.querySelectorAll('.library-page .pref-toggle').length,
+      libraryEditor: document.querySelectorAll('.library-actions .editor-clear').length
     }))()`)
     record(
       '首次启动停留项目库且不显示恢复说明',
       bootView.library === 1 && bootView.projects === 0 && bootView.notice === 0,
       `项目库=${bootView.library} 项目页=${bootView.projects} 说明条=${bootView.notice}`
     )
+    record('侧边栏左下角提供设置入口', bootView.settingsEntry === 1, `设置入口数=${bootView.settingsEntry}`)
     record(
-      '项目库提供「启动时恢复上次项目」开关且默认关闭',
-      bootView.toggle === 1 && bootView.checked === false,
-      `开关数=${bootView.toggle} 勾选=${String(bootView.checked)}`
+      '项目库不再承载应用级设置（开关与编辑器已迁至设置页）',
+      bootView.libraryToggles === 0 && bootView.libraryEditor === 0,
+      `偏好开关=${bootView.libraryToggles} 编辑器入口=${bootView.libraryEditor}`
     )
+
+    /* ---------- 设置页：应用级偏好收拢在一处（界面重构三项·阶段 2） ---------- */
+
+    await evaluate(
+      `(() => { const button = document.querySelector('.sidebar-settings'); if (button) button.click() })()`
+    )
+    const settingsShown = await waitFor(`document.querySelectorAll('.settings-page').length > 0`)
+    const settingsView = await evaluate(`(() => ({
+      groups: [...document.querySelectorAll('.settings-group h2')].map((item) => item.textContent),
+      shellOptions: [...document.querySelectorAll('.settings-group select option')].map((item) => item.value),
+      shellValue: document.querySelector('.settings-group select')?.value ?? null,
+      restoreToggle: document.querySelector('.settings-page .pref-toggle input[type="checkbox"]')?.checked ?? null,
+      editorText: document.querySelector('.settings-page .settings-value')?.textContent ?? null,
+      aboutText: [...document.querySelectorAll('.settings-page .settings-value')].map((item) => item.textContent).join(' / '),
+      projectSlots: document.querySelectorAll('.project-slot').length
+    }))()`)
+    record('侧边栏设置入口可打开设置页', settingsShown === true, `设置页=${String(settingsShown)}`)
+    record(
+      '设置页承载编辑器、终端、启动与关于四组',
+      ['编辑器', '终端', '启动', '关于'].every((title) => settingsView.groups.includes(title)),
+      `分组=${settingsView.groups.join(' / ')}`
+    )
+    record(
+      '终端默认 Shell 提供白名单四项且缺省为自动探测',
+      settingsView.shellOptions.join(',') === ',pwsh,powershell,cmd' && settingsView.shellValue === '',
+      `选项=${settingsView.shellOptions.join(',')} 当前=${String(settingsView.shellValue)}`
+    )
+    record(
+      '设置页的「恢复上次项目」开关默认关闭',
+      settingsView.restoreToggle === false,
+      `勾选=${String(settingsView.restoreToggle)}`
+    )
+    record(
+      '编辑器缺省为未设置',
+      typeof settingsView.editorText === 'string' && settingsView.editorText.includes('未设置'),
+      String(settingsView.editorText)
+    )
+    record('关于展示 Electron 版本', settingsView.aboutText.includes('Electron '), settingsView.aboutText.slice(0, 60))
+
+    // 默认 Shell 经设置页写入应用数据目录（白名单值，主进程持久化）
+    await evaluate(`(() => {
+      const select = document.querySelector('.settings-group select')
+      if (!select) return false
+      select.value = 'cmd'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    })()`)
+    const shellPersisted = await (async () => {
+      const started = Date.now()
+      while (Date.now() - started < 5000) {
+        if (readSettings()?.defaultShell === 'cmd') return true
+        await sleep(120)
+      }
+      return false
+    })()
+    record('默认 Shell 经设置页写入 settings.json', shellPersisted === true, JSON.stringify(readSettings()))
+
+    // 改回自动探测：偏好是持久状态，验证脚本结束时把它留回默认值
+    await evaluate(`(() => {
+      const select = document.querySelector('.settings-group select')
+      if (!select) return false
+      select.value = ''
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    })()`)
+    const shellRestored = await (async () => {
+      const started = Date.now()
+      while (Date.now() - started < 5000) {
+        if (readSettings()?.defaultShell === '') return true
+        await sleep(120)
+      }
+      return false
+    })()
+    record('默认 Shell 可改回自动探测并持久化', shellRestored === true, JSON.stringify(readSettings()))
+
+    await evaluate(
+      `(() => { const button = document.querySelector('.sidebar-library'); if (button) button.click() })()`
+    )
+    const backToLibrary = await waitFor(`document.querySelectorAll('.library-page').length > 0`)
+    record('从设置页可回到项目库', backToLibrary === true, `项目库=${String(backToLibrary)}`)
 
     // 端到端 IPC：项目列表
     const projects = await window.webContents.executeJavaScript('window.workbench.project.list()')
@@ -583,17 +687,6 @@ function runChild() {
     record('页面导航被阻止', before === after, `before=${before.slice(-28)} after=${after.slice(-28)}`)
 
     /* ---------- 界面交互：终端面板开关与文件树展开 ---------- */
-
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const evaluate = (source) => window.webContents.executeJavaScript(source)
-    const waitFor = async (source, timeoutMs = 6000) => {
-      const started = Date.now()
-      while (Date.now() - started < timeoutMs) {
-        if (await evaluate(source)) return true
-        await sleep(150)
-      }
-      return false
-    }
 
     // 进入项目页（在项目库卡片上点击「打开」）
     const opened = await evaluate(`(() => {
@@ -1780,7 +1873,13 @@ function runChild() {
     /* ---------- C09 场景 10：开启开关并记下上次项目 ---------- */
 
     const enableClicked = await evaluate(`(() => {
-      const input = document.querySelector('.pref-toggle input[type="checkbox"]')
+      const settings = document.querySelector('.sidebar-settings')
+      if (settings) settings.click()
+      return settings !== null
+    })()`)
+    const settingsForToggle = await waitFor(`document.querySelectorAll('.settings-page').length > 0`)
+    const toggledOn = await evaluate(`(() => {
+      const input = document.querySelector('.settings-page .pref-toggle input[type="checkbox"]')
       if (!input) return 'missing'
       if (!input.checked) input.click()
       return 'on'
@@ -1789,10 +1888,21 @@ function runChild() {
     const afterEnable = readSettings()
     record(
       '勾选开关后写入应用数据目录',
-      enableClicked === 'on' && afterEnable !== null && afterEnable.restoreLastProject === true,
-      `界面=${String(enableClicked)} settings.json=${JSON.stringify(afterEnable)}`
+      enableClicked === true &&
+        settingsForToggle === true &&
+        toggledOn === 'on' &&
+        afterEnable !== null &&
+        afterEnable.restoreLastProject === true,
+      `入口=${String(enableClicked)} 设置页=${String(settingsForToggle)} 界面=${String(toggledOn)} settings.json=${JSON.stringify(afterEnable)}`
     )
 
+    // 从设置页回到项目库，再打开「第二项目」——启动偏好是应用属性，不该影响打开流程
+    const backToLibraryForOpen = await evaluate(`(() => {
+      const library = document.querySelector('.sidebar-library')
+      if (library) library.click()
+      return library !== null
+    })()`)
+    const cardsBack = await waitFor(`document.querySelectorAll('.project-card').length > 0`)
     const openedSecond = await evaluate(`(() => {
       const card = [...document.querySelectorAll('.project-card')]
         .find((item) => item.textContent.includes('第二项目'))
@@ -1811,8 +1921,12 @@ function runChild() {
     const afterOpen = readSettings()
     record(
       '打开项目即记为上次项目',
-      openedSecond === true && onSecondProject === true && String(afterOpen?.lastProjectId).length > 0,
-      `点击=${String(openedSecond)} 已进入=${String(onSecondProject)} lastProjectId=${String(afterOpen?.lastProjectId)}`
+      backToLibraryForOpen === true &&
+        cardsBack === true &&
+        openedSecond === true &&
+        onSecondProject === true &&
+        String(afterOpen?.lastProjectId).length > 0,
+      `回项目库=${String(backToLibraryForOpen)} 点击=${String(openedSecond)} 已进入=${String(onSecondProject)} lastProjectId=${String(afterOpen?.lastProjectId)}`
     )
     record(
       '偏好只写在应用数据目录，不落入用户项目',

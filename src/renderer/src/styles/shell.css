@@ -317,6 +317,111 @@
   color: var(--accent-strong);
 }
 
+/* 侧边栏底部：项目库 + 设置入口。应用级设置收拢在设置页，入口必须常驻可达 */
+.sidebar-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--separator);
+}
+
+.sidebar-footer .sidebar-library {
+  margin: 0;
+}
+
+.sidebar-settings {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.sidebar-settings:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.sidebar-settings.active {
+  background: var(--accent-soft);
+  border-color: rgba(0, 122, 255, 0.28);
+  color: var(--accent-strong);
+}
+
+.sidebar-settings .gear {
+  flex: none;
+}
+
+/* ---------- 设置页（应用级偏好） ---------- */
+
+.settings-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px 26px;
+  background: var(--bg-content);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-title h1 {
+  font-size: 18px;
+}
+
+.settings-group {
+  max-width: 720px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-group h2 {
+  font-size: 13px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-row .field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+/* 路径值可能很长：等宽 + 全量换行，避免用省略号藏掉用户要确认的信息 */
+.settings-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+  word-break: break-all;
+}
+
 /* ---------- 分段控件（项目页页面切换） ---------- */
 
 .segmented {

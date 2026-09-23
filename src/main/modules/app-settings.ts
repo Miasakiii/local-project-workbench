@@ -1,22 +1,34 @@
 import type { SettingsResult } from '@shared/ipc'
 import { JsonStore } from '../storage/json-store'
+import { SHELL_CHOICES } from './shell-select'
 
 /**
  * 应用级偏好（C09 / 验收场景 10「恢复上次项目」）。
  *
- * 承载三件事，且都写在应用数据目录：
+ * 承载四件事，且都写在应用数据目录：
  * - `restoreLastProject`：开关，**默认关闭**；
  * - `lastProjectId`：上次活跃于哪个项目，由主进程在用户打开项目时记录；
- * - `editorPath`：「用指定编辑器打开」所用的编辑器可执行路径（设计稿 4.2，G3b）。
+ * - `editorPath`：「用指定编辑器打开」所用的编辑器可执行路径（设计稿 4.2，G3b）；
+ * - `defaultShell`：终端默认 Shell，空串=按本机自动探测（界面重构三项·阶段 2）。
  *
- * 刻意与 `projects.json` 分开存放：开关是应用属性，不是项目属性。移除登记、
- * 重新定位都不该改动它——能否恢复由启动那一刻的实际情况决定，见 `decideStartupView`。
+ * 刻意与 `projects.json` 分开存放：这些是应用属性，不是项目属性。移除登记、
+ * 重新定位都不该改动它们——能否恢复由启动那一刻的实际情况决定，见 `decideStartupView`。
  */
 
 const STORE_VERSION = 1
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object'
+}
+
+/**
+ * 默认 Shell 白名单校验。
+ *
+ * 值来自设置页，但这里不信任界面：非白名单字符串（含全新拼写、平台名、路径）
+ * 一律回落为空串（自动探测），与 `shell-select.ts` 共用同一份白名单，避免两处漂移。
+ */
+export function sanitizeDefaultShell(value: unknown): string {
+  return typeof value === 'string' && (SHELL_CHOICES as readonly string[]).includes(value) ? value : ''
 }
 
 function sanitizeSettings(raw: unknown): SettingsResult | null {
@@ -26,7 +38,8 @@ function sanitizeSettings(raw: unknown): SettingsResult | null {
   return {
     restoreLastProject: raw['restoreLastProject'] === true,
     lastProjectId: typeof last === 'string' && last.length > 0 ? last : null,
-    editorPath: typeof editor === 'string' && editor.length > 0 ? editor : null
+    editorPath: typeof editor === 'string' && editor.length > 0 ? editor : null,
+    defaultShell: sanitizeDefaultShell(raw['defaultShell'])
   }
 }
 
@@ -76,6 +89,20 @@ export class AppSettingsStore {
     const current = this.get()
     if (current.lastProjectId === projectId) return
     this.store.write({ ...current, lastProjectId: projectId })
+  }
+
+  /**
+   * 局部更新应用偏好：只改调用方显式给出的字段，其余保持原值。
+   *
+   * 每个字段各自过 sanitize（`restoreLastProject` 归一为布尔、`defaultShell` 过白名单），
+   * 因此渲染层传来的值只是候选，落盘的永远是校验过的值。
+   */
+  update(patch: { restoreLastProject?: boolean; defaultShell?: string }): SettingsResult {
+    const next: SettingsResult = { ...this.get() }
+    if (patch.restoreLastProject !== undefined) next.restoreLastProject = patch.restoreLastProject === true
+    if (patch.defaultShell !== undefined) next.defaultShell = sanitizeDefaultShell(patch.defaultShell)
+    this.store.write(next)
+    return next
   }
 }
 
@@ -140,7 +167,7 @@ export function createSettingsStore(filePath: string): AppSettingsStore {
       filePath,
       version: STORE_VERSION,
       sanitize: sanitizeSettings,
-      createDefault: () => ({ restoreLastProject: false, lastProjectId: null, editorPath: null })
+      createDefault: () => ({ restoreLastProject: false, lastProjectId: null, editorPath: null, defaultShell: '' })
     })
   )
 }

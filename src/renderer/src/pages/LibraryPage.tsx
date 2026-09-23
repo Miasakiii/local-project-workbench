@@ -7,29 +7,20 @@ interface LibraryPageProps {
   projects: ProjectSummary[]
   loading: boolean
   sidebarOpen: boolean
-  /** 「恢复上次项目」开关（应用级偏好，C09） */
-  restoreLastProject: boolean
-  /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b） */
-  editorPath: string | null
-  /** 打开主进程编辑器选择器并持久化 */
-  onConfigureEditor: () => void
-  /** 清空已设置的编辑器，回到未设置 */
-  onClearEditor: () => void
   onToggleSidebar: () => void
   /** 刷新项目列表；返回最新列表供调用方直接使用，本组件不消费其结果 */
   onRefresh: () => Promise<unknown>
   onOpenProject: (projectId: string) => void
   onRegister: () => Promise<void>
   registerBusy: boolean
-  onSetRestoreLastProject: (enabled: boolean) => void
 }
 
 /**
  * 项目库首页（设计稿 2.1，M1-2）。
  *
  * 规则：
- * - 默认启动页即本页；「恢复上次项目」为可选开关（C09），默认关闭。
- *   开关只改变启动时去哪里，不改变本页的任何其它行为。
+ * - 默认启动页即本页；「恢复上次项目」开关与编辑器路径已迁至**设置页**（左下角入口），
+ *   本页只保留登记、搜索、刷新与卡片操作，避免应用级设置散落多处。
  * - 卡片简介支持用户填写（`descriptionOverride`），其次 README 首段，最后回退路径。
  *   卡片「编辑简介」可填写自定义简介，清空保存即恢复自动提取（`project:update` 已支持）。
  * - 目录不可用时卡片明确标注，仍可移除登记或重新定位。
@@ -39,16 +30,11 @@ export function LibraryPage({
   projects,
   loading,
   sidebarOpen,
-  restoreLastProject,
-  editorPath,
-  onConfigureEditor,
-  onClearEditor,
   onToggleSidebar,
   onRefresh,
   onOpenProject,
   onRegister,
-  registerBusy,
-  onSetRestoreLastProject
+  registerBusy
 }: LibraryPageProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [pendingRemoval, setPendingRemoval] = useState<ProjectSummary | null>(null)
@@ -64,8 +50,6 @@ export function LibraryPage({
     () => setEditingDescription(null),
     descriptionInputRef
   )
-
-  const editorLabel = editorPath === null ? '未设置' : (editorPath.split(/[\\/]/).pop() ?? editorPath)
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -187,34 +171,6 @@ export function LibraryPage({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <label
-            className="pref-toggle"
-            title="开启后启动直接进入上次活跃的项目；目录不可用或已移除登记时停留在项目库并说明原因。默认关闭。"
-          >
-            <input
-              type="checkbox"
-              checked={restoreLastProject}
-              onChange={(event) => onSetRestoreLastProject(event.target.checked)}
-            />
-            <span>启动时恢复上次项目</span>
-          </label>
-          <button
-            type="button"
-            onClick={() => onConfigureEditor()}
-            title="选择用于「用指定编辑器打开」的编辑器可执行文件（保存在应用设置中）"
-          >
-            编辑器：{editorLabel}
-          </button>
-          {editorPath !== null ? (
-            <button
-              type="button"
-              className="editor-clear"
-              onClick={() => onClearEditor()}
-              title="清空已设置的编辑器，回到未设置（「用默认程序打开」不受影响）"
-            >
-              清空编辑器
-            </button>
-          ) : null}
           <button type="button" onClick={() => void onRefresh()} disabled={loading}>
             刷新
           </button>
