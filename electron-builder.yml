@@ -58,6 +58,9 @@ npmRebuild: false
 electronDist: build/electron-dist
 
 win:
+  # 应用图标：由 scripts/build-icon.mjs 程序化生成（build/icon.ico，多尺寸 ICO）。
+  # 同时作用于安装包、任务栏、窗口标题栏与资源管理器；缺省时用 Electron 默认图标。
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
