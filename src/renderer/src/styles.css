@@ -13,3 +13,5 @@
 @import './styles/files.css';
 @import './styles/preview.css';
 @import './styles/changes.css';
+/* 右键菜单挂在 body 下，是覆盖型浮层：放在链路末端，使其行内样式之外的单条规则不被后续文件改写 */
+@import './styles/menu.css';

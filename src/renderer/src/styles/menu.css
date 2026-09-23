@@ -1,0 +1,87 @@
+/* ---------- 右键上下文菜单（渲染层自绘浮层） ---------- */
+
+/*
+ * 菜单挂在 body 下（createPortal），因此这里不依赖任何父级布局；
+ * z-index 需高于终端面板与模态，但不必高于系统级浮层——本应用没有后者。
+ */
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 188px;
+  max-width: 300px;
+  padding: 5px;
+  background: var(--bg-content);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-3);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* 出现时不做长动画：右键菜单的响应速度本身就是可用性的一部分 */
+  animation: context-menu-in 90ms var(--ease);
+}
+
+/* 实测尺寸定位前不可见，避免「先在光标左上角闪一下再跳位」 */
+.context-menu.placing {
+  visibility: hidden;
+}
+
+@keyframes context-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 菜单项：去掉 base 的按钮边框与渐变，改为列表行观感 */
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--radius-xs);
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:active:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.menu-item:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* 危险项：红色文字 + 悬停红底；仍可聚焦、可触发，判定逻辑与点击工具栏时完全一致 */
+.menu-item.danger {
+  color: var(--danger);
+}
+
+.menu-item.danger:hover:not(:disabled),
+.menu-item.danger:active:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.menu-item:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--separator);
+}
