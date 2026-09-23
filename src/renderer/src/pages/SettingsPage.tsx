@@ -116,6 +116,9 @@ export function SettingsPage({
       <section className="settings-group" aria-labelledby="settings-terminal-title">
         <h2 id="settings-terminal-title">终端</h2>
         <p className="hint">新建终端时使用的 Shell；选择本机不存在的程序时按自动探测的顺序回退。</p>
+        {info !== null && info.platform !== 'win32' ? (
+          <p className="hint">当前平台不是 Windows，Shell 选择本机不适用，终端按 $SHELL 启动。</p>
+        ) : null}
         <div className="settings-row">
           <label className="field">
             <span>默认 Shell</span>

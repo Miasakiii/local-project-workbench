@@ -97,6 +97,13 @@ export function ProjectPage({
   const [terminalOpen, setTerminalOpen] = useState(false)
   /** 终端全屏：面板吃满主区，把终端当主视图用 */
   const [terminalMaximized, setTerminalMaximized] = useState(false)
+  /**
+   * 用户是否已手动切换过终端面板的可见性。
+   *
+   * 视图状态是**异步**恢复的（一次 IPC 往返）。若这期间用户点了主按钮，恢复值会把
+   * 他刚展开的面板关回去；有了这个标记就跳过 `terminalOpen` 的回落，其余字段照旧恢复。
+   */
+  const terminalTouchedRef = useRef(false)
   /** 多标签：每个标签一个独立会话，切换标签不终止其它会话（设计稿 6.1） */
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeTabKey, setActiveTabKey] = useState<number | null>(null)
@@ -120,7 +127,7 @@ export function ProjectPage({
         setScrollTop(state.scrollTop)
         setPanelHeight(clampPanelHeight(state.terminalPanelHeight))
         setFilesPaneWidth(state.filesPaneWidth)
-        setTerminalOpen(state.terminalOpen)
+        if (!terminalTouchedRef.current) setTerminalOpen(state.terminalOpen)
       }
       restoredRef.current = true
       setRestored(true)
@@ -197,10 +204,18 @@ export function ProjectPage({
    * 用户主动收起不受影响：收不收起只改 `terminalOpen`，`active`／标签数没变，
    * 效果不会重跑，因此不会把用户刚收起的面板又弹开。
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tabs.length 只作判定条件、不作触发依赖——收不收起由用户手势决定，不应因为标签数变化把面板弹回
   useEffect(() => {
-    if (!active) return
-    if (tabs.length > 0) setTerminalOpen(true)
-  }, [active, tabs.length])
+    if (active && tabs.length > 0) setTerminalOpen(true)
+  }, [active])
+
+  // 兜底：会话从无到有时展开（addTab 已展开，这里覆盖恢复/重建等其它入口）
+  const hadTabsRef = useRef(false)
+  useEffect(() => {
+    const hasTabs = tabs.length > 0
+    if (hasTabs && !hadTabsRef.current) setTerminalOpen(true)
+    hadTabsRef.current = hasTabs
+  }, [tabs.length])
 
   // 上报会话状态：侧边栏据此显示「终端运行中」
   useEffect(() => {
@@ -219,13 +234,13 @@ export function ProjectPage({
     setTerminalOpen(true)
   }, [])
 
-  const closeTab = useCallback((key: number) => {
-    setTabs((current) => {
-      const target = current.find((tab) => tab.key === key)
+  const closeTab = useCallback(
+    (key: number) => {
+      const target = tabs.find((tab) => tab.key === key)
       if (target !== undefined && target.sessionId !== null) {
         void window.workbench.terminal.dispose(target.sessionId)
       }
-      const next = current.filter((tab) => tab.key !== key)
+      const next = tabs.filter((tab) => tab.key !== key)
       // 最后一个标签关闭后面板会卸载，全屏态没有意义，顺带复位
       if (next.length === 0) setTerminalMaximized(false)
       setActiveTabKey((active) => {
@@ -233,15 +248,17 @@ export function ProjectPage({
         const fallback = next[next.length - 1]
         return fallback === undefined ? null : fallback.key
       })
-      return next
-    })
-  }, [])
+      setTabs(next)
+    },
+    [tabs]
+  )
 
   /**
    * 「终端」主按钮／Ctrl+`：有会话时切换面板可见性，没有会话时新建一个
    * （未信任项目先确认信任）。全屏态下先退出全屏，避免用户困在全屏里。
    */
   const toggleTerminal = useCallback(() => {
+    terminalTouchedRef.current = true
     if (tabs.length > 0) {
       // 全屏态下先退出全屏，避免「收起再打开」把用户困在全屏里
       if (terminalOpen && terminalMaximized) setTerminalMaximized(false)
@@ -265,7 +282,9 @@ export function ProjectPage({
         onToggleSidebar()
         return
       }
-      if ((event.ctrlKey || event.metaKey) && event.key === '`') {
+      // 反引号物理键位用 code 判定更稳（非常规布局下 key 可能是别的字符）；
+      // 同时保留 key 兜底，便于脚本与无 code 的合成事件驱动。
+      if ((event.ctrlKey || event.metaKey) && (event.code === 'Backquote' || event.key === '`')) {
         event.preventDefault()
         toggleTerminal()
       }
@@ -533,7 +552,7 @@ export function ProjectPage({
               <button
                 type="button"
                 onClick={toggleMaximized}
-                title={terminalMaximized ? '还原为面板（Esc 之外再按一次也可还原）' : '全屏：终端吃满主区域'}
+                title={terminalMaximized ? '还原为面板' : '全屏：终端吃满主区域'}
                 aria-pressed={terminalMaximized}
               >
                 {terminalMaximized ? '还原' : '全屏'}
@@ -541,6 +560,7 @@ export function ProjectPage({
               <button
                 type="button"
                 onClick={() => {
+                  terminalTouchedRef.current = true
                   setTerminalOpen(false)
                   setTerminalMaximized(false)
                 }}

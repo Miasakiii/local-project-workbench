@@ -158,21 +158,33 @@ export default function App(): React.JSX.Element {
    * 落盘值以主进程返回为准（白名单与序列化都在主进程）。
    */
   const updateSettings = useCallback(async (patch: { restoreLastProject?: boolean; defaultShell?: string }) => {
-    const saved = await window.workbench.settings.update(patch)
-    setRestoreLastProject(saved.restoreLastProject)
-    setDefaultShell(saved.defaultShell)
+    try {
+      const saved = await window.workbench.settings.update(patch)
+      setRestoreLastProject(saved.restoreLastProject)
+      setDefaultShell(saved.defaultShell)
+    } catch (error) {
+      // 偏好写不进去必须说出来：否则开关会在界面上「假生效」，下次启动又回到旧值
+      setFatalError(`设置保存失败：${error instanceof Error ? error.message : String(error)}`)
+    }
   }, [])
 
   /** 打开主进程编辑器选择器并持久化；返回的即最新 editorPath（取消为 null=未设置） */
   const configureEditor = useCallback(async () => {
-    const path = await window.workbench.system.setEditor()
-    setEditorPath(path)
+    try {
+      setEditorPath(await window.workbench.system.setEditor())
+    } catch (error) {
+      setFatalError(`选择编辑器失败：${error instanceof Error ? error.message : String(error)}`)
+    }
   }, [])
 
   /** 清空编辑器，回到未设置 */
   const clearEditor = useCallback(async () => {
-    await window.workbench.system.clearEditor()
-    setEditorPath(null)
+    try {
+      await window.workbench.system.clearEditor()
+      setEditorPath(null)
+    } catch (error) {
+      setFatalError(`清空编辑器失败：${error instanceof Error ? error.message : String(error)}`)
+    }
   }, [])
 
   const closeProject = useCallback(

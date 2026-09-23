@@ -74,9 +74,14 @@ export function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Ele
     const onPointerDown = (event: MouseEvent): void => {
       if (isOutside(event)) onClose()
     }
-    // 右键外部：先关当前菜单；若落点本身能再开菜单，调用方会在同一事件里换成新菜单
+    // 右键外部：先关当前菜单；若落点本身能再开菜单，调用方会在同一事件里换成新菜单。
+    // 右键落在**本菜单内**时阻止默认行为——否则 Chromium 的原生菜单会盖在自绘菜单之上。
     const onContextMenu = (event: MouseEvent): void => {
-      if (isOutside(event)) onClose()
+      if (isOutside(event)) {
+        onClose()
+        return
+      }
+      event.preventDefault()
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('contextmenu', onContextMenu, true)
@@ -105,6 +110,18 @@ export function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Ele
     if (focusedIndex < 0) return
     itemRefs.current[focusedIndex]?.focus()
   }, [focusedIndex])
+
+  /**
+   * 换了另一套菜单项时把焦点光标重新落到首个可用项。
+   *
+   * 调用方可能在**不卸载本组件**的情况下替换 `state.items`（同一光标位置右键另一行）。
+   * 此时原先聚焦的按钮可能已不在新菜单里，焦点会掉到 body，之后 Esc 与 ↑↓ 全部失效；
+   * `focusedIndex` 也可能越界。这里按新菜单重建焦点。
+   */
+  useLayoutEffect(() => {
+    const first = state.items.findIndex((item) => item.disabled !== true)
+    setFocusedIndex(first)
+  }, [state.items])
 
   const enabledIndexes = useMemo(
     () => state.items.map((item, index) => (item.disabled === true ? -1 : index)).filter((index) => index >= 0),

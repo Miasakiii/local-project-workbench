@@ -826,6 +826,9 @@ export function FileBrowser({
         {
           id: 'terminal',
           label: isDirectory ? '在此目录新建终端' : '在所在目录新建终端',
+          title: !trusted
+            ? '创建终端前需要先信任该项目（项目头部可切换）'
+            : `在该目录新建一个终端标签（${directoryOf(entry) === '' ? '项目根' : directoryOf(entry)}）`,
           onSelect: () => onOpenTerminalAt(directoryOf(entry))
         },
         {
@@ -936,6 +939,11 @@ export function FileBrowser({
       revealInSystem
     ]
   )
+
+  /** 关闭菜单：稳定引用，让 ContextMenu 的外部交互监听不必随渲染反复增删 */
+  const closeMenu = useCallback(() => {
+    setMenu(null)
+  }, [])
 
   /** 右键某一行：未选中则改选它（已选中则保留多选，与资源管理器一致），再按光标开菜单 */
   const openMenuForEntry = useCallback(
@@ -1058,10 +1066,11 @@ export function FileBrowser({
         }
         case 'F10':
         case 'ContextMenu': {
-          // Shift+F10／Menu 键是「右键」的键盘等价物：给焦点行开出同一套菜单
+          // Shift+F10／Menu 键是「右键」的键盘等价物：给焦点行开出同一套菜单。
+          // 一律阻止默认——否则取不到条目时浏览器会把原生菜单弹出来。
+          event.preventDefault()
           const entry = cursorPath === null ? undefined : list[currentIndex]?.entry
           if (entry === undefined) return
-          event.preventDefault()
           openMenuForKeyboard(entry)
           break
         }
@@ -1325,7 +1334,7 @@ export function FileBrowser({
         </div>
       </div>
 
-      {menu !== null ? <ContextMenu state={menu} onClose={() => setMenu(null)} /> : null}
+      {menu !== null ? <ContextMenu state={menu} onClose={closeMenu} /> : null}
     </div>
   )
 }
