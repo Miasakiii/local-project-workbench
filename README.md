@@ -52,7 +52,7 @@ Ctrl+\`、会话存在即自动展开、可全屏，**只揭示既有会话、�
 | 已完成 | **§ 12 G1**：网络图片按项目授权，默认不加载；已授权者由主进程代取并复核后转 data URL |
 | 已完成 | **界面重构三项**：文件栏右键化 / 侧边栏设置入口+设置页 / 终端主角化（推进计划 § 13，分四阶段落地并各自回归） |
 | 已完成 | M3-5 分发实测（2026-09-23）：`pack:win` 生成 NSIS 安装包 **99.9 MB**，无人值守安装／静默卸载／用户数据保留／安装目录上 9/9 项产物验证全部通过 |
-| 进行中 | M3-5 余项：真实 ACL 拒绝删除未补测 |
+| 进行中 | M3-5 余项：真实 ACL 拒绝删除未补测（2026-09-23 本环境尝试未成，发现与结论见[M3-5 手册 §B](docs/plan/M3-5环境受限项验收手册.md)） |
 | 未落地 | 设计稿「设计建议」层余 8 项（推进计划 § 12 G2–G9）：界面入口缺失或刻意取舍，不影响 C01–C10 与 10 项验收场景 |
 | 已确认 | 安装包体积**无硬性上限**（2026-09-19 确认）：维持 Electron，D1 重评触发条件不再适用；M3-5 只做常规裁剪 |
 | 已确认 | 真实桌面人工验收已于 2026-09-21 完成：界面渲染、右键菜单、设置页、终端主角化、模态焦点与键盘可达均通过 |
@@ -445,8 +445,13 @@ release/本地项目工作台-0.1.0-setup.exe /S /D=F:\sud\local-project-workben
    中文文案正常、无致命错误。
    `node scripts/verify-packaged.cjs --dir=F:\sud\local-project-workbench`
 
-仍缺产品资源：安装包与窗口使用默认 Electron 图标（`buildResources` 未提供 `icon.ico`），
-属设计资源缺口，非配置疏漏。
+**应用图标**（2026-09-23 补齐）：安装包、任务栏、窗口标题栏与资源管理器图标由
+`scripts/build-icon.mjs` 程序化生成（`build/icon.ico`，解析几何 + 4×4 超采样抗锯齿，
+256/48/32/16 四个尺寸，256 位图内嵌 PNG）。`pack:dir`／`pack:win` 会先跑 `node scripts/build-icon.mjs`
+再交给 electron-builder（`win.icon: build/icon.ico`）；也可单独执行 `npm run build:icon` 预览
+（同时产出 `build/icon-256.png`）。构图是圆角方底（品牌蓝渐变，取自界面强调色）+ 白窗
+（标题栏三钮）+ 终端提示符 `>_`。**换设计师稿时直接替换 `build/icon.ico` 即可**，脚本与
+`electron-builder.yml` 的指向不变。此前「使用默认 Electron 图标」的设计资源缺口已关闭。
 
 ---
 
@@ -464,6 +469,7 @@ release/本地项目工作台-0.1.0-setup.exe /S /D=F:\sud\local-project-workben
 ```bash
 npm run dev         # 开发模式（热更新）
 npm run build       # 构建生产版本到 out/
+npm run build:icon  # 生成应用图标 build/icon.ico（打包链已内置此步）
 npm run preview     # 预览构建结果
 npm run typecheck   # 主进程与渲染进程类型检查
 
