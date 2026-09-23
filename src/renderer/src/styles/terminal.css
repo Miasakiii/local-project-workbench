@@ -1,5 +1,9 @@
 /* ---------- 终端面板 ---------- */
 
+/*
+ * 面板默认是底部一条（与文件／预览并存，可边看边用）；
+ * 全屏时改为覆盖整个主区，把终端当主视图用（.maximized）。
+ */
 .terminal-panel {
   flex: none;
   display: flex;
@@ -12,6 +16,14 @@
 /* 收起时面板整体不参与布局，但终端组件保持挂载，会话不终止 */
 .terminal-panel.closed {
   display: none;
+}
+
+/* 全屏：覆盖项目页主区，高度由布局决定（不上内联 height，也不给拖拽手柄） */
+.terminal-panel.maximized {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  box-shadow: var(--shadow-3);
 }
 
 .terminal-header {

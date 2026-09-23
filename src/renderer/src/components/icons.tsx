@@ -49,6 +49,24 @@ export function ChevronIcon({ className }: IconProps): React.JSX.Element {
   )
 }
 
+/** 终端：项目头「终端」主按钮用的提示符方块 */
+export function TerminalIcon({ className }: IconProps): React.JSX.Element {
+  return (
+    <svg className={className} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+      <rect x="1.6" y="2.8" width="12.8" height="10.4" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <path
+        d="M4.6 6.4l2.2 2-2.2 2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M8.6 10.6h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 /** 设置：齿轮（侧边栏左下角入口） */
 export function GearIcon({ className }: IconProps): React.JSX.Element {
   return (

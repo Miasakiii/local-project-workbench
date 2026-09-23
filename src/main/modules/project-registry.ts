@@ -87,7 +87,9 @@ function sanitizeViewState(raw: unknown): ProjectViewState | null {
     scrollTop: typeof scrollTop === 'number' && Number.isFinite(scrollTop) ? scrollTop : 0,
     terminalPanelHeight:
       typeof terminalPanelHeight === 'number' && Number.isFinite(terminalPanelHeight) ? terminalPanelHeight : 280,
-    filesPaneWidth: typeof filesPaneWidth === 'number' && Number.isFinite(filesPaneWidth) ? filesPaneWidth : 380
+    filesPaneWidth: typeof filesPaneWidth === 'number' && Number.isFinite(filesPaneWidth) ? filesPaneWidth : 380,
+    // 旧记录没有该字段时按收起处理：不替用户展开面板，只恢复浏览位置
+    terminalOpen: raw['terminalOpen'] === true
   }
 }
 

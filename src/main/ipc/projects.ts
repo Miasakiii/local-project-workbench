@@ -149,7 +149,8 @@ export function registerProjectIpc(ctx: IpcContext): void {
       relativePath: request.relativePath,
       scrollTop: Number.isFinite(request.scrollTop) ? request.scrollTop : 0,
       terminalPanelHeight: Number.isFinite(request.terminalPanelHeight) ? request.terminalPanelHeight : 280,
-      filesPaneWidth: Number.isFinite(request.filesPaneWidth) ? request.filesPaneWidth : 380
+      filesPaneWidth: Number.isFinite(request.filesPaneWidth) ? request.filesPaneWidth : 380,
+      terminalOpen: request.terminalOpen === true
     })
   })
 }

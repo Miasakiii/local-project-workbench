@@ -944,11 +944,17 @@ function runChild() {
       `面板数=${docked.panels}（内容区 ${docked.contentHeight}px / 页面 ${docked.pageHeight}px）`
     )
 
-    // 未信任项目点击终端应先确认信任
-    await evaluate(`(() => {
-      const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('终端 ·'))
-      if (button) button.click()
+    // 终端主按钮（界面重构三项·阶段 4）：未信任项目点击应先确认信任
+    const terminalButtonPresent = await evaluate(`(() => {
+      const button = document.querySelector('.terminal-toggle')
+      return button === null ? null : { text: button.textContent.trim(), badge: button.querySelector('.terminal-badge')?.textContent ?? null }
     })()`)
+    record(
+      '项目头部提供终端主按钮',
+      terminalButtonPresent !== null && String(terminalButtonPresent.text).includes('终端'),
+      `按钮=${String(terminalButtonPresent?.text)}`
+    )
+    await evaluate(`(() => { document.querySelector('.terminal-toggle')?.click() })()`)
     const trustShown = await waitFor(`document.querySelectorAll('.modal-backdrop').length > 0`)
     record('未信任项目创建终端前先确认信任', trustShown === true, trustShown ? '已弹出确认' : '未弹出')
 
@@ -1113,6 +1119,75 @@ function runChild() {
       `host 挂载=${String(collapseState.hostStillMounted)} 头部显示会话运行中=${String(collapseState.headerLabel)}`
     )
 
+    /* ---------- 终端主角化：Ctrl+`、全屏与还原（界面重构三项·阶段 4） ---------- */
+
+    const hostsBeforeToggle = await evaluate(`document.querySelectorAll('.terminal-host').length`)
+    await evaluate(
+      "(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: '`', ctrlKey: true, bubbles: true })) })()"
+    )
+    await sleep(400)
+    const afterShortcut = await evaluate(`(() => {
+      const panel = document.querySelector('.terminal-panel')
+      if (panel === null) return null
+      return {
+        closed: panel.classList.contains('closed'),
+        height: Math.round(panel.getBoundingClientRect().height),
+        hosts: document.querySelectorAll('.terminal-host').length
+      }
+    })()`)
+    record(
+      'Ctrl+` 可呼出终端面板',
+      afterShortcut?.closed === false && afterShortcut.height > 100,
+      `closed=${String(afterShortcut?.closed)} 高度=${String(afterShortcut?.height)}px`
+    )
+    record(
+      'Ctrl+` 呼出不重建会话',
+      afterShortcut?.hosts === hostsBeforeToggle,
+      `host 数=${String(afterShortcut?.hosts)}（此前 ${hostsBeforeToggle}）`
+    )
+
+    await evaluate(`(() => {
+      const button = [...document.querySelectorAll('.terminal-panel button')].find((item) => item.textContent.trim() === '全屏')
+      if (button) button.click()
+    })()`)
+    await sleep(300)
+    const maximizedState = await evaluate(`(() => {
+      const panel = document.querySelector('.terminal-panel')
+      const page = document.querySelector('.project-page')
+      if (panel === null || page === null) return null
+      return {
+        cls: panel.className,
+        panelHeight: Math.round(panel.getBoundingClientRect().height),
+        pageHeight: Math.round(page.getBoundingClientRect().height),
+        resizeHandles: panel.querySelectorAll('.terminal-resize').length,
+        hosts: document.querySelectorAll('.terminal-host').length
+      }
+    })()`)
+    record(
+      '终端可全屏，面板吃满主区',
+      maximizedState?.cls.includes('maximized') === true &&
+        Math.abs(maximizedState.panelHeight - maximizedState.pageHeight) <= 2 &&
+        maximizedState.resizeHandles === 0,
+      `panel=${maximizedState?.panelHeight}px page=${maximizedState?.pageHeight}px 拖拽手柄=${String(maximizedState?.resizeHandles)}`
+    )
+    record('全屏不重建会话', maximizedState?.hosts === hostsBeforeToggle, `host 数=${String(maximizedState?.hosts)}`)
+
+    await evaluate(`(() => {
+      const button = [...document.querySelectorAll('.terminal-panel button')].find((item) => item.textContent.trim() === '还原')
+      if (button) button.click()
+    })()`)
+    await sleep(300)
+    const restoredPanel = await evaluate(`(() => {
+      const panel = document.querySelector('.terminal-panel')
+      if (panel === null) return null
+      return { cls: panel.className, height: Math.round(panel.getBoundingClientRect().height) }
+    })()`)
+    record(
+      '终端可从全屏还原为面板',
+      restoredPanel?.cls.includes('maximized') === false && restoredPanel.height > 100,
+      `高度=${String(restoredPanel?.height)}px`
+    )
+
     /* ---------- 侧边栏：终端运行提示 ---------- */
 
     const runningIndicator = await evaluate(`(() => ({
@@ -1145,9 +1220,7 @@ function runChild() {
       const headers = [...document.querySelectorAll('.project-page')]
         .filter((page) => page.closest('.project-slot')?.classList.contains('hidden') !== true)
       const header = headers[0] ?? null
-      const terminalButton = header === null
-        ? null
-        : [...header.querySelectorAll('button.chip')].find((button) => button.textContent.includes('终端 ·'))
+      const terminalButton = header === null ? null : header.querySelector('.terminal-toggle')
       return {
         visiblePages: headers.length,
         title: header?.querySelector('h1')?.textContent ?? null,
@@ -1181,14 +1254,15 @@ function runChild() {
       const headers = [...document.querySelectorAll('.project-page')]
         .filter((page) => page.closest('.project-slot')?.classList.contains('hidden') !== true)
       const header = headers[0] ?? null
-      const terminalButton = header === null
-        ? null
-        : [...header.querySelectorAll('button.chip')].find((button) => button.textContent.includes('终端 ·'))
+      const terminalButton = header === null ? null : header.querySelector('.terminal-toggle')
       const host = header?.querySelector('.terminal-host')
+      const panel = header?.querySelector('.terminal-panel')
       return {
         title: header?.querySelector('h1')?.textContent ?? null,
         terminalLabel: terminalButton?.textContent ?? null,
-        terminalMounted: host !== null && host !== undefined
+        terminalMounted: host !== null && host !== undefined,
+        panelClosed: panel?.classList.contains('closed') ?? null,
+        panelHeight: panel === null || panel === undefined ? 0 : Math.round(panel.getBoundingClientRect().height)
       }
     })()`)
     record(
@@ -1198,6 +1272,12 @@ function runChild() {
         backToFirst.terminalLabel.includes('会话运行中') &&
         backToFirst.terminalMounted === true,
       `标题=${String(backToFirst.title)} 终端=${String(backToFirst.terminalLabel)}`
+    )
+    // 会话存在即展开（界面重构三项·阶段 4）：只揭示既有会话，不自动创建
+    record(
+      '切回有会话的项目时终端面板自动展开',
+      backToFirst.panelClosed === false && backToFirst.panelHeight > 100,
+      `closed=${String(backToFirst.panelClosed)} 高度=${backToFirst.panelHeight}px`
     )
 
     const multiOpen = await evaluate(`(() => ({

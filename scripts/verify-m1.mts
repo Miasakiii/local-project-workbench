@@ -239,6 +239,56 @@ function main(): void {
     legacyState?.filesPaneWidth === 380 && legacyState?.terminalPanelHeight === 300,
     `分栏宽=${String(legacyState?.filesPaneWidth)} 面板高=${String(legacyState?.terminalPanelHeight)}`
   )
+  check(
+    '旧视图状态的终端面板按收起恢复（不替用户展开）',
+    legacyState?.terminalOpen === false,
+    `terminalOpen=${String(legacyState?.terminalOpen)}`
+  )
+  check(
+    '终端面板展开状态可持久化',
+    (() => {
+      const store = createRegistry(createRegistryStore(legacyStorePath))
+      store.saveViewState({
+        projectId: 'persisted',
+        page: 'files',
+        relativePath: 'src',
+        scrollTop: 12,
+        terminalPanelHeight: 320,
+        filesPaneWidth: 400,
+        terminalOpen: true
+      })
+      return createRegistry(createRegistryStore(legacyStorePath)).getViewState('persisted')?.terminalOpen === true
+    })(),
+    '重开 store 后 terminalOpen 仍为 true'
+  )
+  check(
+    'terminalOpen 非布尔值按收起处理',
+    (() => {
+      writeFileSync(
+        legacyStorePath,
+        JSON.stringify({
+          version: 1,
+          data: {
+            projects: [],
+            viewStates: [
+              {
+                projectId: 'weird',
+                page: 'files',
+                relativePath: '',
+                scrollTop: 0,
+                terminalPanelHeight: 280,
+                filesPaneWidth: 380,
+                terminalOpen: 'yes'
+              }
+            ]
+          }
+        }),
+        'utf8'
+      )
+      return createRegistry(createRegistryStore(legacyStorePath)).getViewState('weird')?.terminalOpen === false
+    })(),
+    '字符串 "yes" 落回 false'
+  )
 
   /* ---------- 存储容错 ---------- */
 

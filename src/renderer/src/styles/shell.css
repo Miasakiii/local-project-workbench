@@ -5,6 +5,8 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* 终端全屏态用 absolute 覆盖主区，需要定位上下文 */
+  position: relative;
 }
 
 .project-header {
@@ -56,6 +58,61 @@
 
 .project-badges button.chip:focus-visible {
   box-shadow: var(--focus-ring);
+}
+
+/* 终端主按钮（界面重构三项·阶段 4）：与「终端 · 状态」chip 不同，它是主操作入口，
+   因此用主色描边＋图标＋状态角标，视觉权重高于同排的状态 chip 但低于 primary 动作。 */
+.terminal-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 122, 255, 0.35);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.terminal-toggle:hover:not(:disabled) {
+  background: var(--accent-soft-hover);
+}
+
+.terminal-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.terminal-toggle:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* 状态角标：运行中用绿色，未创建／无会话用中性色 */
+.terminal-badge {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-2);
+}
+
+.terminal-toggle.active .terminal-badge {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.terminal-badge.live {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.terminal-toggle.active .terminal-badge.live {
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
 }
 
 /* ---------- 应用骨架：侧边栏 + 主区域 ---------- */

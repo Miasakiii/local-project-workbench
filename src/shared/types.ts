@@ -51,6 +51,8 @@ export interface ProjectViewState {
   terminalPanelHeight: number
   /** 文件页左侧树栏宽度（像素） */
   filesPaneWidth: number
+  /** 终端面板上次是否展开（界面重构三项·阶段 4）；会话本身不跨重启恢复 */
+  terminalOpen: boolean
 }
 
 /** Git 变更分组 */

@@ -2,7 +2,7 @@ import type { GitSnapshot, ProjectPage as ProjectPageName, ProjectSummary, Proje
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChangesView } from '../components/ChangesView'
 import { FileBrowser } from '../components/FileBrowser'
-import { SidebarIcon } from '../components/icons'
+import { SidebarIcon, TerminalIcon } from '../components/icons'
 import { OverviewView } from '../components/OverviewView'
 import { ResizeHandle } from '../components/ResizeHandle'
 import { TerminalView } from '../components/TerminalView'
@@ -55,8 +55,8 @@ function clampPanelHeight(value: number): number {
 /**
  * 项目首页框架（设计稿 2.2，M1-3）。
  *
- * 布局：头部（侧栏开关、返回、标题、**页面分段控件**、状态徽章）+ 内容区 +
- * 可完全收起的终端面板。
+ * 布局：头部（侧栏开关、返回、标题、**页面分段控件**、状态徽章、**终端主按钮**）+
+ * 内容区 + 可收起、可全屏的终端面板。
  *
  * 页面切换用头部的分段控件而非侧边导航：侧边栏已改为项目切换器，
  * 若页面导航也放在侧边栏里，收起侧边栏就会导致无法切换页面。
@@ -66,6 +66,10 @@ function clampPanelHeight(value: number): number {
  * - 切换页面、收起面板、**切换项目**都不终止会话——本组件在项目打开期间始终挂载。
  * - 面板上明确显示所属项目与启动目录。
  * - 首次创建终端前先确认项目信任。
+ *
+ * 终端主角化（界面重构三项·阶段 4）：头部主按钮「终端」+ Ctrl+` 一键呼出；
+ * 已有会话的项目切回来时自动展开（**只揭示既有会话，绝不自动创建**）；
+ * 面板可全屏，当作主视图用。可见性与面板高度都进视图状态，重启后恢复。
  */
 export function ProjectPage({
   project,
@@ -91,6 +95,8 @@ export function ProjectPage({
 
   /** 终端面板：未创建标签时不渲染，创建后由用户自由开关 */
   const [terminalOpen, setTerminalOpen] = useState(false)
+  /** 终端全屏：面板吃满主区，把终端当主视图用 */
+  const [terminalMaximized, setTerminalMaximized] = useState(false)
   /** 多标签：每个标签一个独立会话，切换标签不终止其它会话（设计稿 6.1） */
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeTabKey, setActiveTabKey] = useState<number | null>(null)
@@ -114,6 +120,7 @@ export function ProjectPage({
         setScrollTop(state.scrollTop)
         setPanelHeight(clampPanelHeight(state.terminalPanelHeight))
         setFilesPaneWidth(state.filesPaneWidth)
+        setTerminalOpen(state.terminalOpen)
       }
       restoredRef.current = true
       setRestored(true)
@@ -130,25 +137,12 @@ export function ProjectPage({
         relativePath: filePath,
         scrollTop,
         terminalPanelHeight: panelHeight,
-        filesPaneWidth
+        filesPaneWidth,
+        terminalOpen
       })
     }, 400)
     return () => window.clearTimeout(timer)
-  }, [project.id, page, filePath, scrollTop, panelHeight, filesPaneWidth])
-
-  // 侧边栏开关：Ctrl/Cmd+B 是同类应用的通用快捷键。仅在当前项目可见时响应，
-  // 否则每个已打开的项目都会同时切换一次。
-  useEffect(() => {
-    if (!active) return
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
-        event.preventDefault()
-        onToggleSidebar()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [active, onToggleSidebar])
+  }, [project.id, page, filePath, scrollTop, panelHeight, filesPaneWidth, terminalOpen])
 
   // 订阅文件变化信号。监听只是刷新信号，事实以重新读取与 Git 查询为准。
   useEffect(() => {
@@ -193,6 +187,21 @@ export function ProjectPage({
   const terminalMounted = tabs.length > 0
   const activeTab = tabs.find((tab) => tab.key === activeTabKey) ?? null
 
+  /**
+   * 会话存在即展开（界面重构三项·阶段 4）。
+   *
+   * 切到／切回有会话的项目时自动展开面板——**只揭示既有会话，绝不自动创建**：
+   * 没有标签时这里什么也不做，创建入口始终是用户的一次显式点击（头部主按钮、
+   * Ctrl+`、文件栏右键「在此目录新建终端」），首次创建仍走信任确认。
+   *
+   * 用户主动收起不受影响：收不收起只改 `terminalOpen`，`active`／标签数没变，
+   * 效果不会重跑，因此不会把用户刚收起的面板又弹开。
+   */
+  useEffect(() => {
+    if (!active) return
+    if (tabs.length > 0) setTerminalOpen(true)
+  }, [active, tabs.length])
+
   // 上报会话状态：侧边栏据此显示「终端运行中」
   useEffect(() => {
     onTerminalRunningChange(project.id, runningTabCount > 0)
@@ -217,6 +226,8 @@ export function ProjectPage({
         void window.workbench.terminal.dispose(target.sessionId)
       }
       const next = current.filter((tab) => tab.key !== key)
+      // 最后一个标签关闭后面板会卸载，全屏态没有意义，顺带复位
+      if (next.length === 0) setTerminalMaximized(false)
       setActiveTabKey((active) => {
         if (active !== key) return active
         const fallback = next[next.length - 1]
@@ -226,9 +237,14 @@ export function ProjectPage({
     })
   }, [])
 
-  /** 头部的「终端」按钮：无标签时先建一个，之后切换面板开关 */
+  /**
+   * 「终端」主按钮／Ctrl+`：有会话时切换面板可见性，没有会话时新建一个
+   * （未信任项目先确认信任）。全屏态下先退出全屏，避免用户困在全屏里。
+   */
   const toggleTerminal = useCallback(() => {
     if (tabs.length > 0) {
+      // 全屏态下先退出全屏，避免「收起再打开」把用户困在全屏里
+      if (terminalOpen && terminalMaximized) setTerminalMaximized(false)
       setTerminalOpen((value) => !value)
       return
     }
@@ -237,7 +253,31 @@ export function ProjectPage({
       return
     }
     addTab('')
-  }, [addTab, project.trusted, tabs.length])
+  }, [addTab, project.trusted, tabs.length, terminalMaximized, terminalOpen])
+
+  // 侧边栏开关：Ctrl/Cmd+B 是同类应用的通用快捷键。仅在当前项目可见时响应，
+  // 否则每个已打开的项目都会同时切换一次。Ctrl+`（反引号）呼出终端面板，同理。
+  useEffect(() => {
+    if (!active) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
+        event.preventDefault()
+        onToggleSidebar()
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === '`') {
+        event.preventDefault()
+        toggleTerminal()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [active, onToggleSidebar, toggleTerminal])
+
+  /** 全屏／还原：只改面板占位，不触碰会话（多标签与进程保持原样） */
+  const toggleMaximized = useCallback(() => {
+    setTerminalMaximized((value) => !value)
+  }, [])
 
   const confirmTrust = useCallback(async () => {
     const updated = await window.workbench.project.update({ projectId: project.id, trusted: true })
@@ -362,13 +402,28 @@ export function ProjectPage({
           >
             {project.trusted ? '已信任（点击改为只读）' : '只读浏览（点击信任）'}
           </button>
+          {/*
+            终端主按钮（界面重构三项·阶段 4）：本项目不是单纯的项目管理器，
+            终端与文件／预览同级。运行态用角标标出，没有会话时按钮就是创建入口。
+          */}
           <button
             type="button"
-            className={terminalOpen ? 'chip chip-active' : 'chip'}
+            className={terminalOpen ? 'terminal-toggle active' : 'terminal-toggle'}
             onClick={toggleTerminal}
-            title={terminalOpen ? '收起终端面板（不结束会话）' : '打开终端面板'}
+            aria-pressed={terminalOpen}
+            title={
+              tabs.length === 0
+                ? project.trusted
+                  ? '新建终端会话（Ctrl+`）'
+                  : '创建终端前需要先信任该项目'
+                : terminalOpen
+                  ? '收起终端面板（Ctrl+`，不结束会话）'
+                  : '展开终端面板（Ctrl+`）'
+            }
           >
-            终端 · {terminalStateLabel}
+            <TerminalIcon />
+            <span className="terminal-toggle-label">终端</span>
+            <span className={runningTabCount > 0 ? 'terminal-badge live' : 'terminal-badge'}>{terminalStateLabel}</span>
           </button>
           <button type="button" onClick={() => void window.workbench.project.reveal({ projectId: project.id })}>
             在资源管理器中打开
@@ -430,22 +485,26 @@ export function ProjectPage({
 
       {terminalMounted ? (
         <section
-          className={terminalOpen ? 'terminal-panel' : 'terminal-panel closed'}
-          style={terminalOpen ? { height: panelHeight } : undefined}
+          className={
+            terminalOpen ? (terminalMaximized ? 'terminal-panel maximized' : 'terminal-panel') : 'terminal-panel closed'
+          }
+          style={terminalOpen && !terminalMaximized ? { height: panelHeight } : undefined}
         >
-          {/* 上边缘拖拽调整高度，不使用滑动条 */}
-          <ResizeHandle
-            axis="y"
-            className="terminal-resize"
-            ariaLabel="拖拽调整终端面板高度"
-            onDragStart={() => {
-              panelHeightOriginRef.current = panelHeight
-            }}
-            onDrag={(delta) => setPanelHeight(clampPanelHeight(panelHeightOriginRef.current - delta))}
-            onDragEnd={() => {
-              // 高度在拖拽过程中已实时更新，去抖保存会自动落盘
-            }}
-          />
+          {/* 上边缘拖拽调整高度，不使用滑动条；全屏态高度由布局决定，不提供拖拽 */}
+          {terminalMaximized ? null : (
+            <ResizeHandle
+              axis="y"
+              className="terminal-resize"
+              ariaLabel="拖拽调整终端面板高度"
+              onDragStart={() => {
+                panelHeightOriginRef.current = panelHeight
+              }}
+              onDrag={(delta) => setPanelHeight(clampPanelHeight(panelHeightOriginRef.current - delta))}
+              onDragEnd={() => {
+                // 高度在拖拽过程中已实时更新，去抖保存会自动落盘
+              }}
+            />
+          )}
 
           <header className="terminal-header">
             <div className="terminal-title">
@@ -459,18 +518,43 @@ export function ProjectPage({
             </div>
             <div className="terminal-actions">
               {activeTab !== null && activeTab.sessionId === null ? (
-                <button type="button" onClick={() => restartTab(activeTab.key)}>
+                <button type="button" onClick={() => restartTab(activeTab.key)} title="在当前标签内重新建立会话">
                   重建会话
                 </button>
               ) : null}
-              <button type="button" onClick={() => openTerminalAt('')}>
+              <button
+                type="button"
+                onClick={() => openTerminalAt('')}
+                title="新建一个终端标签（每个标签一个独立会话）"
+                aria-label="新建终端标签"
+              >
                 新建标签
               </button>
-              <button type="button" onClick={() => setTerminalOpen(false)}>
-                收起（不结束会话）
+              <button
+                type="button"
+                onClick={toggleMaximized}
+                title={terminalMaximized ? '还原为面板（Esc 之外再按一次也可还原）' : '全屏：终端吃满主区域'}
+                aria-pressed={terminalMaximized}
+              >
+                {terminalMaximized ? '还原' : '全屏'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTerminalOpen(false)
+                  setTerminalMaximized(false)
+                }}
+                title="收起终端面板，会话继续在后台运行"
+              >
+                收起
               </button>
               {activeTab !== null && activeTab.sessionId !== null ? (
-                <button type="button" className="danger" onClick={endActiveSession}>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={endActiveSession}
+                  title="结束当前标签的会话（其中的命令会被中断）"
+                >
                   结束会话
                 </button>
               ) : null}

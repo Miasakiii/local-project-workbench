@@ -195,6 +195,8 @@ export interface ViewStateSaveRequest {
   scrollTop: number
   terminalPanelHeight: number
   filesPaneWidth: number
+  /** 终端面板是否展开；只记可见性，不恢复会话（界面重构三项·阶段 4） */
+  terminalOpen: boolean
 }
 
 /* ---------- 文件浏览与预览 ---------- */
