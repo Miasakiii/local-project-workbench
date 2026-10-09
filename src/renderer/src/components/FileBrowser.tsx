@@ -2,18 +2,12 @@ import type { FileEntry, FileListResult, FileOperationBatchResult, FilePreview }
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ContextMenuItem, ContextMenuState } from './ContextMenu'
 import { ContextMenu } from './ContextMenu'
+import { FileBrowserToolbar } from './FileBrowserToolbar'
+import { FileTree, type Row } from './FileTree'
 import { buildBlankMenu, buildEntryMenu, type ClipboardMode } from './file-browser/menus'
 import type { OperationNotice } from './file-browser/utils'
-import {
-  ancestorDirectories,
-  formatBytes,
-  formatTime,
-  legacyCopy,
-  operationReport,
-  parentDirectoryOf,
-  tooltipFor
-} from './file-browser/utils'
-import { ChevronIcon, FileIcon, FolderIcon } from './icons'
+import { ancestorDirectories, legacyCopy, operationReport, parentDirectoryOf } from './file-browser/utils'
+import { OperationNote } from './OperationNote'
 import { PreviewPane } from './PreviewPane'
 import { ResizeHandle } from './ResizeHandle'
 
@@ -41,10 +35,6 @@ interface DirectoryState {
   result: FileListResult | null
   error: string | null
 }
-
-type Row =
-  | { kind: 'entry'; depth: number; entry: FileEntry }
-  | { kind: 'note'; depth: number; text: string; tone: 'plain' | 'error' }
 
 interface ClipboardState {
   mode: ClipboardMode
@@ -666,9 +656,6 @@ export function FileBrowser({
       ? '尚未设置编辑器：请在侧边栏「设置」→「编辑器」中选择'
       : `用 ${editorPath.split(/[\\/]/).pop() ?? editorPath} 打开`
 
-  /** 当前目标目录的展示名：工具栏「新建」按钮与分 split-button 菜单共用 */
-  const whereLabel = targetDirectory.length === 0 ? '项目根' : targetDirectory
-
   /**
    * 菜单构建委托给 `file-browser/menus.ts` 的纯函数（重构，行为不变）。
    *
@@ -805,6 +792,54 @@ export function FileBrowser({
     [openMenuForEntry]
   )
 
+  /**
+   * 面包屑「项目根」：清空选择回到根视野。
+   *
+   * 与 `clearSelection` 的差别是刻意的：这里**不**重置键盘光标与预览滚动位置
+   * （点面包屑不等于放弃键盘位置），行为与原内联实现一致。
+   */
+  const selectRoot = useCallback(() => {
+    appliedRef.current = ''
+    selectedPathsRef.current = new Set()
+    setSelectedPaths(new Set())
+    setSelectedPath(null)
+    setSelectedEntry(null)
+    selectedEntryRef.current = null
+    setPreview(null)
+    onPathChange('')
+  }, [onPathChange])
+
+  /** 右键条目：先阻止默认菜单，再按光标位置开该条目的菜单（选中逻辑见 openMenuForEntry） */
+  const handleRowContextMenu = useCallback(
+    (entry: FileEntry, event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      openMenuForEntry(entry, event.clientX, event.clientY, event.currentTarget)
+    },
+    [openMenuForEntry]
+  )
+
+  /** 右键空白处：落在树行上时放行（由行自己的处理器负责），否则开「当前目录」菜单 */
+  const handleBlankContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (event.target instanceof Element && event.target.closest('.tree-row') !== null) return
+      event.preventDefault()
+      openBlankMenu(event.clientX, event.clientY, null)
+    },
+    [openBlankMenu]
+  )
+
+  /** 树行 DOM 引用登记／注销：键盘导航据此聚焦 */
+  const handleRowMount = useCallback((relativePath: string, element: HTMLDivElement | null) => {
+    if (element) rowRefs.current.set(relativePath, element)
+    else rowRefs.current.delete(relativePath)
+  }, [])
+
+  /** 「新建」分 split-button 菜单：位置贴在锚点下方，焦点归还锚点 */
+  const openCreateMenu = useCallback((anchor: HTMLElement, items: ContextMenuItem[]) => {
+    const rect = anchor.getBoundingClientRect()
+    setMenu({ x: Math.round(rect.left), y: Math.round(rect.bottom + 4), returnFocusTo: anchor, items })
+  }, [])
+
   /* ---------- 键盘树导航（ARIA tree：漫游 tabindex + 方向键） ---------- */
 
   /** 可见的条目行（去掉提示行），顺序即视觉顺序，供 ↑/↓/Home/End 遍历 */
@@ -922,208 +957,40 @@ export function FileBrowser({
 
   return (
     <div className="file-browser">
-      <div className="browser-toolbar">
-        <nav className="breadcrumb" aria-label="当前选中项路径">
-          <button
-            type="button"
-            onClick={() => {
-              appliedRef.current = ''
-              selectedPathsRef.current = new Set()
-              setSelectedPaths(new Set())
-              setSelectedPath(null)
-              setSelectedEntry(null)
-              selectedEntryRef.current = null
-              setPreview(null)
-              onPathChange('')
-            }}
-          >
-            项目根
-          </button>
-          {breadcrumb.map((crumb) => (
-            <span key={crumb.relativePath}>
-              <span className="sep">/</span>
-              <button
-                type="button"
-                onClick={() => void revealEntry(crumb.relativePath, true)}
-                title={crumb.relativePath}
-              >
-                {crumb.name}
-              </button>
-            </span>
-          ))}
-          {selectedPath === null ? <span className="hint">未选择条目</span> : null}
-        </nav>
-        {/*
-          工具栏只留视图级操作与「新建」。针对某个条目的动作全部下沉到右键菜单
-          （树行右键，或焦点行按 Shift+F10／Menu 键），避免十几枚按钮挤占一行。
-        */}
-        <div className="browser-actions">
-          <button type="button" onClick={collapseAll} disabled={expanded.size === 0}>
-            收起全部
-          </button>
-          <button type="button" onClick={refreshAll} disabled={operationBusy}>
-            刷新
-          </button>
-          <div className="split-button">
-            <button
-              type="button"
-              onClick={() => void createNewEntry('file', targetDirectory)}
-              disabled={!trusted || operationBusy}
-              title={trusted ? `在「${whereLabel}」中新建空文件` : '请先信任项目，才能执行文件操作'}
-            >
-              新建文件
-            </button>
-            <button
-              type="button"
-              className="split-caret"
-              aria-haspopup="menu"
-              aria-label="新建选项"
-              title="选择新建文件或新建文件夹"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect()
-                setMenu({
-                  x: Math.round(rect.left),
-                  y: Math.round(rect.bottom + 4),
-                  returnFocusTo: event.currentTarget,
-                  items: [
-                    {
-                      id: 'new-file',
-                      label: '新建文件',
-                      disabled: !trusted,
-                      title: writeTitle ?? `在「${whereLabel}」中新建空文件`,
-                      onSelect: () => void createNewEntry('file', targetDirectory)
-                    },
-                    {
-                      id: 'new-directory',
-                      label: '新建文件夹',
-                      disabled: !trusted,
-                      title: writeTitle ?? `在「${whereLabel}」中新建空文件夹`,
-                      onSelect: () => void createNewEntry('directory', targetDirectory)
-                    }
-                  ]
-                })
-              }}
-            >
-              ▾
-            </button>
-          </div>
-        </div>
-      </div>
+      <FileBrowserToolbar
+        breadcrumb={breadcrumb}
+        selectedPath={selectedPath}
+        targetDirectory={targetDirectory}
+        trusted={trusted}
+        writeTitle={writeTitle}
+        operationBusy={operationBusy}
+        expandedSize={expanded.size}
+        onSelectRoot={selectRoot}
+        onSelectCrumb={(relativePath) => void revealEntry(relativePath, true)}
+        onCollapseAll={collapseAll}
+        onRefreshAll={refreshAll}
+        onCreateEntry={(kind, target) => void createNewEntry(kind, target)}
+        onOpenCreateMenu={openCreateMenu}
+      />
 
-      {operationNotice !== null ? (
-        <div
-          className={operationNotice.tone === 'error' ? 'file-operation-note error' : 'file-operation-note'}
-          role="status"
-        >
-          <strong>{operationNotice.title}</strong>
-          {operationNotice.details.length > 0 ? (
-            <ul>
-              {operationNotice.details.map((detail) => (
-                <li key={detail}>{detail}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
+      {operationNotice !== null ? <OperationNote notice={operationNotice} /> : null}
 
       <div className="browser-split" ref={splitRef}>
-        <div
-          className="file-tree"
-          role="tree"
-          aria-multiselectable="true"
-          onKeyDown={handleTreeKeyDown}
-          style={{ width: paneWidth }}
-          // 右键空白处：开「当前目录」菜单（新建／粘贴／刷新）
-          onContextMenu={(event) => {
-            if (event.target instanceof Element && event.target.closest('.tree-row') !== null) return
-            event.preventDefault()
-            openBlankMenu(event.clientX, event.clientY, null)
-          }}
-        >
-          <div className="tree-head">
-            <span className="col-name">名称</span>
-            <span className="col-size">大小</span>
-            <span className="col-time">修改时间</span>
-          </div>
-
-          {rows.map((row, index) => {
-            if (row.kind === 'note') {
-              return (
-                <div
-                  // biome-ignore lint/suspicious/noArrayIndexKey: 提示行由视图动态合成，同一目录下可能重复出现相同文案，索引参与复合键是唯一可靠选择
-                  key={`note-${index}`}
-                  className={row.tone === 'error' ? 'tree-note error' : 'tree-note'}
-                  style={{ paddingLeft: 50 + row.depth * 16 }}
-                >
-                  {row.text}
-                </div>
-              )
-            }
-
-            const entry = row.entry
-            const isExpanded = expanded.has(entry.relativePath)
-            const isSelected = selectedPaths.has(entry.relativePath)
-
-            return (
-              <div
-                key={entry.relativePath}
-                ref={(element) => {
-                  if (element) rowRefs.current.set(entry.relativePath, element)
-                  else rowRefs.current.delete(entry.relativePath)
-                }}
-                className={isSelected ? 'tree-row selected' : 'tree-row'}
-                style={{ paddingLeft: 4 + row.depth * 16 }}
-                role="treeitem"
-                aria-level={row.depth + 1}
-                aria-selected={isSelected}
-                aria-expanded={entry.kind === 'directory' ? isExpanded : undefined}
-                tabIndex={(cursorPath ?? focusableRows[0]?.entry.relativePath) === entry.relativePath ? 0 : -1}
-                title={tooltipFor(entry)}
-                onFocus={() => setCursorPath(entry.relativePath)}
-                // 右键条目：先按需选中，再按光标位置开该条目的菜单
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  openMenuForEntry(entry, event.clientX, event.clientY, event.currentTarget)
-                }}
-              >
-                {entry.kind === 'directory' ? (
-                  <button
-                    type="button"
-                    className={isExpanded ? 'twisty expanded' : 'twisty'}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      toggleDirectory(entry.relativePath)
-                    }}
-                    title={isExpanded ? '收起' : '展开'}
-                    aria-label={isExpanded ? '收起' : '展开'}
-                    tabIndex={-1}
-                  >
-                    <ChevronIcon className="chevron" />
-                  </button>
-                ) : (
-                  <span className="twisty placeholder" />
-                )}
-
-                <button
-                  type="button"
-                  className="tree-label"
-                  tabIndex={-1}
-                  onClick={(event) => handleRowClick(event, entry)}
-                >
-                  {entry.kind === 'directory' ? <FolderIcon className="glyph" /> : <FileIcon className="glyph" />}
-                  <span className="name">
-                    {entry.name}
-                    {entry.isLink ? <span className="chip chip-link">链接</span> : null}
-                  </span>
-                  <span className="size">{entry.kind === 'directory' ? '—' : formatBytes(entry.size)}</span>
-                  <span className="time">{formatTime(entry.modifiedAt)}</span>
-                </button>
-              </div>
-            )
-          })}
-
-          {rows.length === 0 ? <div className="tree-note">正在读取目录…</div> : null}
-        </div>
+        <FileTree
+          rows={rows}
+          expanded={expanded}
+          selectedPaths={selectedPaths}
+          cursorPath={cursorPath}
+          firstFocusablePath={focusableRows[0]?.entry.relativePath ?? null}
+          paneWidth={paneWidth}
+          onTreeKeyDown={handleTreeKeyDown}
+          onBlankContextMenu={handleBlankContextMenu}
+          onRowContextMenu={handleRowContextMenu}
+          onRowFocus={setCursorPath}
+          onRowMount={handleRowMount}
+          onToggleDirectory={toggleDirectory}
+          onLabelClick={handleRowClick}
+        />
 
         {/* 分隔线拖拽调整左右宽度，不使用固定比例 */}
         <ResizeHandle
