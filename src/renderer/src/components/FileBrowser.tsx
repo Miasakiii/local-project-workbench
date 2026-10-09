@@ -2,6 +2,17 @@ import type { FileEntry, FileListResult, FileOperationBatchResult, FilePreview }
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ContextMenuItem, ContextMenuState } from './ContextMenu'
 import { ContextMenu } from './ContextMenu'
+import { buildBlankMenu, buildEntryMenu, type ClipboardMode } from './file-browser/menus'
+import type { OperationNotice } from './file-browser/utils'
+import {
+  ancestorDirectories,
+  formatBytes,
+  formatTime,
+  legacyCopy,
+  operationReport,
+  parentDirectoryOf,
+  tooltipFor
+} from './file-browser/utils'
 import { ChevronIcon, FileIcon, FolderIcon } from './icons'
 import { PreviewPane } from './PreviewPane'
 import { ResizeHandle } from './ResizeHandle'
@@ -35,94 +46,9 @@ type Row =
   | { kind: 'entry'; depth: number; entry: FileEntry }
   | { kind: 'note'; depth: number; text: string; tone: 'plain' | 'error' }
 
-type ClipboardMode = 'copy' | 'move'
-
 interface ClipboardState {
   mode: ClipboardMode
   paths: string[]
-}
-
-interface OperationNotice {
-  tone: 'success' | 'error'
-  title: string
-  details: string[]
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes <= 0) return '—'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function formatTime(iso: string): string {
-  if (iso.startsWith('1970-01-01')) return '—'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('zh-CN', { hour12: false })
-}
-
-/** 悬浮提示：优先显示完整名称，被省略号截断时尤其需要 */
-function tooltipFor(entry: FileEntry): string {
-  const lines = [entry.name]
-  if (entry.relativePath !== entry.name) lines.push(entry.relativePath)
-  if (entry.isLink) lines.push('符号链接或目录联接')
-  lines.push(entry.kind === 'directory' ? '单击展开或收起' : '单击预览')
-  return lines.join('\n')
-}
-
-/** 拆分路径，返回从根到父级的目录链（不含自身） */
-function ancestorDirectories(relativePath: string): string[] {
-  const segments = relativePath.split('/').filter((segment) => segment.length > 0)
-  const trail: string[] = []
-  let accumulated = ''
-  for (let index = 0; index < segments.length - 1; index += 1) {
-    accumulated = accumulated.length === 0 ? (segments[index] as string) : `${accumulated}/${segments[index]}`
-    trail.push(accumulated)
-  }
-  return trail
-}
-
-function parentDirectoryOf(relativePath: string): string {
-  const separator = relativePath.lastIndexOf('/')
-  return separator < 0 ? '' : relativePath.slice(0, separator)
-}
-
-function operationReport(result: FileOperationBatchResult, action: string): OperationNotice {
-  const title = `${action}完成：成功 ${result.ok} 项，失败 ${result.failed} 项，未执行 ${result.skipped} 项`
-  const details: string[] = []
-  if (result.abortMessage !== null) details.push(result.abortMessage)
-  for (const item of result.items) {
-    if (item.status === 'ok') continue
-    const target =
-      item.targetRelativePath === undefined || item.targetRelativePath === null ? '' : ` → ${item.targetRelativePath}`
-    details.push(`${item.status === 'skipped' ? '未执行' : '失败'}：${item.relativePath}${target}：${item.message}`)
-  }
-  return {
-    tone: result.failed > 0 || result.skipped > 0 || result.aborted ? 'error' : 'success',
-    title,
-    details: [...new Set(details)]
-  }
-}
-
-/** 兼容回退：无 navigator.clipboard 的安全上下文时用 execCommand 复制 */
-function legacyCopy(text: string): boolean {
-  const area = document.createElement('textarea')
-  area.value = text
-  area.setAttribute('readonly', '')
-  area.style.position = 'fixed'
-  area.style.opacity = '0'
-  document.body.appendChild(area)
-  area.select()
-  let ok = false
-  try {
-    ok = document.execCommand('copy')
-  } catch {
-    ok = false
-  } finally {
-    document.body.removeChild(area)
-  }
-  return ok
 }
 
 /**
@@ -740,187 +666,91 @@ export function FileBrowser({
       ? '尚未设置编辑器：请在侧边栏「设置」→「编辑器」中选择'
       : `用 ${editorPath.split(/[\\/]/).pop() ?? editorPath} 打开`
 
-  /** 条目的父目录：文件取其所在目录，目录取其自身 */
-  const directoryOf = useCallback(
-    (entry: FileEntry): string =>
-      entry.kind === 'directory' ? entry.relativePath : parentDirectoryOf(entry.relativePath),
-    []
-  )
-
-  /** 空白处（树背景）菜单：作用于当前目标目录 */
+  /** 当前目标目录的展示名：工具栏「新建」按钮与分 split-button 菜单共用 */
   const whereLabel = targetDirectory.length === 0 ? '项目根' : targetDirectory
 
-  const blankMenu = useCallback((): ContextMenuItem[] => {
-    const where = targetDirectory.length === 0 ? '项目根' : targetDirectory
-    const create: ContextMenuItem[] = [
-      {
-        id: 'new-file',
-        label: '新建文件',
-        disabled: !trusted,
-        title: writeTitle ?? `在「${where}」中新建空文件`,
-        onSelect: () => void createNewEntry('file', targetDirectory)
-      },
-      {
-        id: 'new-directory',
-        label: '新建文件夹',
-        disabled: !trusted,
-        title: writeTitle ?? `在「${where}」中新建空文件夹`,
-        onSelect: () => void createNewEntry('directory', targetDirectory)
-      }
-    ]
-    const paste: ContextMenuItem[] =
-      clipboardRef.current === null || clipboardRef.current.paths.length === 0
-        ? []
-        : [
-            {
-              id: 'paste',
-              label: `粘贴（${clipboardRef.current?.paths.length ?? 0}）`,
-              disabled: !trusted,
-              title: writeTitle ?? `粘贴到${where}`,
-              separatorBefore: true,
-              onSelect: () => void pasteClipboard(targetDirectory)
-            }
-          ]
-    return [...create, ...paste, { id: 'refresh', label: '刷新', separatorBefore: true, onSelect: refreshAll }]
-  }, [createNewEntry, pasteClipboard, refreshAll, targetDirectory, trusted, writeTitle])
-
   /**
-   * 条目菜单。分三段，顺序与右键本意一致：
-   * 1. 只读操作（预览／打开／展开）；
-   * 2. 跨对象操作（终端、复制路径、定位）；
-   * 3. 写操作（新建、复制、剪切、重命名、删除）。
+   * 菜单构建委托给 `file-browser/menus.ts` 的纯函数（重构，行为不变）。
+   *
+   * 这里只负责把组件当前状态组装成 context 快照；剪贴板从 ref 读——「复制」与
+   * 随后的右键菜单可能落在同一个事件批次里，ref 是同步更新的，菜单据此判断
+   * 要不要给出「粘贴」才不会拿到上一次的旧状态。
    */
-  const entryMenu = useCallback(
-    (entry: FileEntry): ContextMenuItem[] => {
-      const isDirectory = entry.kind === 'directory'
-
-      const read: ContextMenuItem[] = isDirectory
-        ? [
-            {
-              id: 'toggle',
-              label: expanded.has(entry.relativePath) ? '收起' : '展开',
-              onSelect: () => toggleDirectory(entry.relativePath)
-            }
-          ]
-        : [
-            {
-              id: 'preview',
-              label: '预览',
-              onSelect: () => openPreview(entry)
-            },
-            {
-              id: 'open-default',
-              label: '用默认程序打开',
-              onSelect: () => void openExternally(entry)
-            },
-            {
-              id: 'open-editor',
-              label: '用指定编辑器打开',
-              disabled: editorPath === null,
-              title: editorTitle,
-              onSelect: () => void openWithEditor(entry)
-            }
-          ]
-
-      const shared: ContextMenuItem[] = [
-        {
-          id: 'terminal',
-          label: isDirectory ? '在此目录新建终端' : '在所在目录新建终端',
-          title: !trusted
-            ? '创建终端前需要先信任该项目（项目头部可切换）'
-            : `在该目录新建一个终端标签（${directoryOf(entry) === '' ? '项目根' : directoryOf(entry)}）`,
-          onSelect: () => onOpenTerminalAt(directoryOf(entry))
-        },
-        {
-          id: 'copy-path',
-          label: '复制路径',
-          disabled: selectedCount === 0,
-          title: selectedCount <= 1 ? '复制该条目相对路径' : `复制所选 ${selectedCount} 个条目相对路径`,
-          onSelect: () => void copyPaths(selectedPathList())
-        },
-        {
-          id: 'reveal',
-          label: '在资源管理器中定位',
-          onSelect: () => void revealInSystem(entry)
-        }
-      ]
-
-      const createHere: ContextMenuItem[] = isDirectory
-        ? [
-            {
-              id: 'new-file',
-              label: '新建文件',
-              disabled: !trusted,
-              title: writeTitle ?? `在「${entry.relativePath}」中新建空文件`,
-              separatorBefore: true,
-              onSelect: () => void createNewEntry('file', entry.relativePath)
-            },
-            {
-              id: 'new-directory',
-              label: '新建文件夹',
-              disabled: !trusted,
-              title: writeTitle ?? `在「${entry.relativePath}」中新建空文件夹`,
-              onSelect: () => void createNewEntry('directory', entry.relativePath)
-            },
-            // 剪贴板有内容时才给出「粘贴」，目标就是右键的这个目录
-            ...(clipboardRef.current === null || clipboardRef.current.paths.length === 0
-              ? []
-              : [
-                  {
-                    id: 'paste',
-                    label: `粘贴（${clipboardRef.current?.paths.length ?? 0}）`,
-                    disabled: !trusted,
-                    title: writeTitle ?? `粘贴到「${entry.relativePath}」`,
-                    onSelect: () => void pasteClipboard(entry.relativePath)
-                  }
-                ])
-          ]
-        : []
-
-      const write: ContextMenuItem[] = [
-        {
-          id: 'copy',
-          label: '复制',
-          disabled: !trusted,
-          title: writeTitle ?? '复制所选项目，之后选择目标目录并粘贴',
-          separatorBefore: createHere.length === 0,
-          onSelect: () => setClipboardFromSelection('copy')
-        },
-        {
-          id: 'cut',
-          label: '剪切',
-          disabled: !trusted,
-          title: writeTitle ?? '剪切所选项目，之后选择目标目录并粘贴',
-          onSelect: () => setClipboardFromSelection('move')
-        },
-        {
-          id: 'rename',
-          label: '重命名',
-          disabled: !trusted || selectedCount !== 1,
-          title:
-            selectedCount !== 1
-              ? '重命名只对单个选中项可用（可先取消多选）'
-              : (writeTitle ?? '在同一父目录内重命名该条目'),
-          onSelect: () => void renameSelected(entry)
-        },
-        {
-          id: 'delete',
-          label: '删除',
-          danger: true,
-          disabled: !trusted,
-          title: writeTitle ?? '将所选项目发送到系统回收站',
-          separatorBefore: true,
-          onSelect: () => void deleteSelected()
-        }
-      ]
-
-      return [...read, ...shared, ...createHere, ...write]
-    },
+  const blankMenu = useCallback(
+    (): ContextMenuItem[] =>
+      buildBlankMenu({
+        targetDirectory,
+        trusted,
+        writeTitle,
+        clipboard: clipboardRef.current,
+        selectedPathList,
+        createNewEntry,
+        pasteClipboard,
+        refreshAll,
+        toggleDirectory,
+        openPreview,
+        openExternally,
+        openWithEditor,
+        openTerminalAt: onOpenTerminalAt,
+        copyPaths,
+        revealInSystem,
+        setClipboardFromSelection,
+        renameSelected,
+        deleteSelected
+      }),
     [
       copyPaths,
       createNewEntry,
       deleteSelected,
-      directoryOf,
+      onOpenTerminalAt,
+      openExternally,
+      openPreview,
+      openWithEditor,
+      pasteClipboard,
+      refreshAll,
+      renameSelected,
+      revealInSystem,
+      selectedPathList,
+      setClipboardFromSelection,
+      targetDirectory,
+      toggleDirectory,
+      trusted,
+      writeTitle
+    ]
+  )
+
+  const entryMenu = useCallback(
+    (entry: FileEntry): ContextMenuItem[] =>
+      buildEntryMenu(
+        {
+          trusted,
+          writeTitle,
+          editorPath,
+          editorTitle,
+          expanded,
+          selectedCount,
+          clipboard: clipboardRef.current,
+          selectedPathList,
+          createNewEntry,
+          pasteClipboard,
+          refreshAll,
+          toggleDirectory,
+          openPreview,
+          openExternally,
+          openWithEditor,
+          openTerminalAt: onOpenTerminalAt,
+          copyPaths,
+          revealInSystem,
+          setClipboardFromSelection,
+          renameSelected,
+          deleteSelected
+        },
+        entry
+      ),
+    [
+      copyPaths,
+      createNewEntry,
+      deleteSelected,
       editorPath,
       editorTitle,
       expanded,
@@ -929,14 +759,15 @@ export function FileBrowser({
       openPreview,
       openWithEditor,
       pasteClipboard,
+      refreshAll,
       renameSelected,
+      revealInSystem,
       selectedCount,
       selectedPathList,
       setClipboardFromSelection,
       toggleDirectory,
       trusted,
-      writeTitle,
-      revealInSystem
+      writeTitle
     ]
   )
 
