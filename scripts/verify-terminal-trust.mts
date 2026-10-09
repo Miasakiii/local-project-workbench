@@ -66,20 +66,34 @@ function captureError(manager: PtySessionManager, trusted: boolean, cwd: string,
 }
 
 /**
- * 删除样例目录，带重试。
+ * 删除样例目录，带退避重试。
  *
- * Windows 上刚 kill 掉的 shell 进程可能仍把启动目录当作当前工作目录而短暂占用，
- * 直接 rmSync 会以 EPERM 失败；这不是被测逻辑的问题，重试即可。
+ * Windows 上刚 kill 掉的 shell 进程可能仍把启动目录当作当前工作目录而短暂占用
+ * （ConPTY 退出后短暂持有），直接 rmSync 会以 EPERM 失败；这不是被测逻辑的问题，
+ * 退避重试即可。仍失败时返回 false——清理是「尽力而为」，**不冒充验证失败**
+ * （套件结果只由断言决定，与清理成败无关）。
+ *
+ * 退避 300/600/1200/2400 ms、至多 5 次尝试。两个关键点：
+ * 1. **必须用 `await setTimeout` 而非 `Atomics.wait`**：后者阻塞主线程，libuv
+ *    无法处理 conhost 退出通知——实测持有期在阻塞窗口内永远不会释放（套件打印
+ *    「残留」后进程一退出目录立即可删，正是这个原因）；
+ * 2. 释放时长方差很大：正常 settle 后 kill 的会话数百毫秒内释放，刚建好就 kill
+ *    的 ConPTY 会话可达数秒（conhost 拆卸与 shell 初始化赛跑）。
  */
-function removeFixture(): void {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+const CLEANUP_BACKOFF_MS = [300, 600, 1200, 2400]
+
+async function removeFixture(): Promise<boolean> {
+  for (let attempt = 0; attempt <= CLEANUP_BACKOFF_MS.length; attempt += 1) {
     try {
       rmSync(root, { recursive: true, force: true })
-      return
+      return true
     } catch {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150)
+      const wait = CLEANUP_BACKOFF_MS[attempt]
+      if (wait === undefined) return false
+      await new Promise((resolve) => setTimeout(resolve, wait))
     }
   }
+  return false
 }
 
 async function main(): void {
@@ -172,7 +186,7 @@ async function main(): void {
   if (keepFixture) {
     console.log(`\n样例目录已保留：${root}`)
   } else {
-    const cleaned = await removeFixture()
+    const cleaned = removeFixture()
     console.log(cleaned ? `样例目录已清理：${root}` : `样例目录有残留（ConPTY 短暂持有，下一轮复用）：${root}`)
   }
 
