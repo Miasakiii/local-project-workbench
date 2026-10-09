@@ -1,12 +1,16 @@
-import type { FileEntry, FileListResult, FileOperationBatchResult, FilePreview } from '@shared/types'
+import type { FileEntry } from '@shared/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useFileOperations } from '../hooks/useFileOperations'
+import { useFilePreview } from '../hooks/useFilePreview'
+import { useFileSelection } from '../hooks/useFileSelection'
+import { useFileTreeData } from '../hooks/useFileTreeData'
+import { useTreeKeyboardNav } from '../hooks/useTreeKeyboardNav'
 import type { ContextMenuItem, ContextMenuState } from './ContextMenu'
 import { ContextMenu } from './ContextMenu'
 import { FileBrowserToolbar } from './FileBrowserToolbar'
-import { FileTree, type Row } from './FileTree'
-import { buildBlankMenu, buildEntryMenu, type ClipboardMode } from './file-browser/menus'
-import type { OperationNotice } from './file-browser/utils'
-import { ancestorDirectories, legacyCopy, operationReport, parentDirectoryOf } from './file-browser/utils'
+import { FileTree } from './FileTree'
+import { buildBlankMenu, buildEntryMenu } from './file-browser/menus'
+import { ancestorDirectories, legacyCopy, parentDirectoryOf } from './file-browser/utils'
 import { OperationNote } from './OperationNote'
 import { PreviewPane } from './PreviewPane'
 import { ResizeHandle } from './ResizeHandle'
@@ -30,17 +34,6 @@ interface FileBrowserProps {
   onOpenTerminalAt: (relativePath: string) => void
 }
 
-interface DirectoryState {
-  status: 'loading' | 'ready' | 'error'
-  result: FileListResult | null
-  error: string | null
-}
-
-interface ClipboardState {
-  mode: ClipboardMode
-  paths: string[]
-}
-
 /**
  * 文件树与只读预览（设计稿 4.2，M1-4）。
  *
@@ -53,6 +46,15 @@ interface ClipboardState {
  * 操作入口（界面重构三项·阶段 3）：针对**某个条目**的动作一律走右键上下文菜单
  * （渲染层自绘 `ContextMenu`），工具栏只留视图级操作与「新建」。
  * 树行另有键盘等价键 Shift+F10／Menu：焦点行同样能开出同一套菜单。
+ *
+ * 结构（重构拆分，行为不变）：本文件只做**组合**——状态与逻辑按关注点收在
+ * `hooks/` 下，展示层在 `FileTree`／`FileBrowserToolbar`／`OperationNote`，
+ * 菜单构建在 `file-browser/menus.ts`：
+ * - `useFilePreview`      预览读取、错误态与滚动保持；
+ * - `useFileTreeData`     目录按需加载、展开状态与扁平行列表；
+ * - `useFileSelection`    选择／键盘光标与 ref 同步镜像；
+ * - `useFileOperations`   四类写操作、剪贴板与逐项结果提示；
+ * - `useTreeKeyboardNav`  ARIA tree 键盘导航。
  */
 export function FileBrowser({
   projectId,
@@ -66,115 +68,72 @@ export function FileBrowser({
   onNavigateProjectPath,
   onOpenTerminalAt
 }: FileBrowserProps): React.JSX.Element {
-  const [dirs, setDirs] = useState<Record<string, DirectoryState>>({})
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set())
-  const [selectedEntry, setSelectedEntry] = useState<FileEntry | null>(null)
-  const [preview, setPreview] = useState<FilePreview | null>(null)
-  const [loadingPreview, setLoadingPreview] = useState(false)
-  const [previewError, setPreviewError] = useState<string | null>(null)
-  const [operationBusy, setOperationBusy] = useState(false)
-  /**
-   * 剪贴板状态（复制／剪切待粘贴的项目）。
-   *
-   * 刻意用 ref 而非 state：它**没有任何渲染依赖**（工具栏已不放粘贴按钮），
-   * 而「复制」与随后的右键菜单可能落在同一个事件批次里——ref 是同步更新的，
-   * 菜单据此判断要不要给出「粘贴」才不会拿到上一次的旧状态。
-   */
-  const clipboardRef = useRef<ClipboardState | null>(null)
-  const [operationNotice, setOperationNotice] = useState<OperationNotice | null>(null)
-  /** 键盘树导航的「焦点光标」；null 表示尚未进入树，此时首个可见行可被 Tab 聚焦 */
-  const [cursorPath, setCursorPath] = useState<string | null>(null)
+  const preview = useFilePreview({ projectId })
+  const tree = useFileTreeData({ projectId })
+  const selection = useFileSelection({
+    onPathChange,
+    openPreview: preview.openPreview,
+    clearPreview: preview.clearPreview,
+    dismissPreview: preview.dismissPreview
+  })
+
+  const {
+    preview: currentPreview,
+    loadingPreview,
+    previewError,
+    previewHostRef,
+    previewScrollRef,
+    openPreview,
+    clearPreview,
+    dismissPreview
+  } = preview
+  const {
+    rows,
+    expanded,
+    setExpanded,
+    expandedRef,
+    loadDirectory,
+    toggleDirectory,
+    collapseAll,
+    refreshAll,
+    refreshLoadedDirectories,
+    resetAll: resetTree
+  } = tree
+  const {
+    selectedPath,
+    selectedPaths,
+    selectedEntry,
+    cursorPath,
+    setCursorPath,
+    setSelectedPath,
+    setSelectedPaths,
+    setSelectedEntry,
+    selectedPathsRef,
+    selectedEntryRef,
+    appliedRef,
+    selectEntry,
+    clearSelection,
+    clearEntry,
+    applyRevealed,
+    keepFailedSelection,
+    resetAll: resetSelection,
+    selectedPathList
+  } = selection
+
   /** 右键上下文菜单（渲染层自绘）；null 表示未打开 */
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
-
-  const generationRef = useRef(0)
-  const selectedPathsRef = useRef<Set<string>>(new Set())
-  const selectedEntryRef = useRef<FileEntry | null>(null)
-  const expandedRef = useRef<Set<string>>(new Set())
-  const appliedRef = useRef<string | null>(null)
   const splitRef = useRef<HTMLDivElement>(null)
   /** 拖拽起点的宽度快照 */
   const paneWidthOriginRef = useRef(paneWidth)
-  /** 预览容器：用于在重载前后保持滚动位置 */
-  const previewHostRef = useRef<HTMLDivElement>(null)
-  const previewScrollRef = useRef(0)
   /** 键盘树导航：每个 treeitem 的 DOM 引用，按相对路径索引 */
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
-  /** 加载一个目录并返回结果，便于调用方在同一流程内继续处理 */
-  const loadDirectory = useCallback(
-    async (relativePath: string): Promise<FileListResult | null> => {
-      const generation = generationRef.current
-      setDirs((current) => ({
-        ...current,
-        [relativePath]: {
-          status: 'loading',
-          result: current[relativePath]?.result ?? null,
-          error: null
-        }
-      }))
-
-      try {
-        const result = await window.workbench.file.list({ projectId, relativePath })
-        if (generation !== generationRef.current) return null
-        setDirs((current) => ({
-          ...current,
-          [relativePath]: {
-            status: result.error === null ? 'ready' : 'error',
-            result,
-            error: result.error
-          }
-        }))
-        return result
-      } catch (error) {
-        if (generation !== generationRef.current) return null
-        const message = error instanceof Error ? error.message : String(error)
-        setDirs((current) => ({
-          ...current,
-          [relativePath]: { status: 'error', result: null, error: message }
-        }))
-        return null
-      }
-    },
-    [projectId]
-  )
-
-  const openPreview = useCallback(
-    (entry: FileEntry, preserveScroll = false) => {
-      if (!preserveScroll) previewScrollRef.current = 0
-      setLoadingPreview(true)
-      setPreviewError(null)
-      void window.workbench.file
-        .preview({ projectId, relativePath: entry.relativePath })
-        .then(setPreview)
-        .catch((error: unknown) => {
-          setPreview(null)
-          setPreviewError(error instanceof Error ? error.message : String(error))
-        })
-        .finally(() => setLoadingPreview(false))
-    },
-    [projectId]
-  )
-
-  /* ---------- 初始加载与视图状态恢复 ---------- */
-
-  useEffect(() => {
-    generationRef.current += 1
-    setDirs({})
-    setExpanded(new Set())
-    selectedPathsRef.current = new Set()
-    setSelectedPaths(new Set())
-    setSelectedPath(null)
-    setSelectedEntry(null)
-    setPreview(null)
-    setCursorPath(null)
-    appliedRef.current = null
-    void loadDirectory('')
-  }, [loadDirectory])
-
-  /** 展开并选中某条目（含其祖先目录链） */
+  /**
+   * 展开并选中某条目（含其祖先目录链）——组合树、选择与预览三个 hook。
+   *
+   * 选中部分走 `applyRevealed`（不标记 initialPath 已应用）：重命名后
+   * 「效果再揭示一次」的原有行为由此保留。
+   */
   const revealEntry = useCallback(
     async (relativePath: string, select: boolean) => {
       const ancestors = ancestorDirectories(relativePath)
@@ -190,403 +149,28 @@ export function FileBrowser({
       const entry = parentResult?.entries.find((item) => item.relativePath === relativePath) ?? null
       if (entry === null || !select) return entry
 
-      const nextSelection = new Set([entry.relativePath])
-      selectedPathsRef.current = nextSelection
-      setSelectedPaths(nextSelection)
-      selectedEntryRef.current = entry
-      setSelectedPath(entry.relativePath)
-      setSelectedEntry(entry)
-      setCursorPath(entry.relativePath)
+      applyRevealed(entry)
       if (entry.kind === 'file') openPreview(entry)
       return entry
     },
-    [loadDirectory, openPreview]
+    [applyRevealed, loadDirectory, openPreview, setExpanded]
   )
 
-  useEffect(() => {
-    if (appliedRef.current === initialPath) return
-    appliedRef.current = initialPath
-    if (initialPath.length === 0) return
-    void revealEntry(initialPath, true)
-  }, [initialPath, revealEntry])
+  const operations = useFileOperations({
+    projectId,
+    trusted,
+    selectedPathList,
+    selectedEntryRef,
+    clearSelection,
+    keepFailedSelection,
+    resetTree,
+    refreshLoadedDirectories,
+    revealEntry,
+    onPathChange
+  })
 
-  const selectedCount = selectedPaths.size
-  const selectedPathList = useCallback((): string[] => [...selectedPathsRef.current], [])
-
-  const clearSelection = useCallback(() => {
-    selectedPathsRef.current = new Set()
-    setSelectedPaths(new Set())
-    setSelectedPath(null)
-    setSelectedEntry(null)
-    selectedEntryRef.current = null
-    setPreview(null)
-    previewScrollRef.current = 0
-    setCursorPath(null)
-    onPathChange('')
-  }, [onPathChange])
-
-  const refreshLoadedDirectories = useCallback(async () => {
-    generationRef.current += 1
-    await Promise.all(['', ...expanded].map((directory) => loadDirectory(directory)))
-  }, [expanded, loadDirectory])
-
-  const targetDirectory =
-    selectedEntry === null
-      ? ''
-      : selectedEntry.kind === 'directory'
-        ? selectedEntry.relativePath
-        : parentDirectoryOf(selectedEntry.relativePath)
-
-  const keepFailedSelection = useCallback(
-    (result: FileOperationBatchResult) => {
-      const remaining = result.items.filter((item) => item.status !== 'ok').map((item) => item.relativePath)
-      if (remaining.length === 0) {
-        clearSelection()
-        return
-      }
-      const next = new Set(remaining)
-      selectedPathsRef.current = next
-      setSelectedPaths(next)
-      setSelectedPath(remaining[0] ?? null)
-      setSelectedEntry(null)
-      selectedEntryRef.current = null
-      setPreview(null)
-      onPathChange(remaining[0] ?? '')
-    },
-    [clearSelection, onPathChange]
-  )
-
-  const firstSuccessfulTarget = useCallback((result: FileOperationBatchResult): string | null => {
-    for (const item of result.items) {
-      if (item.status === 'ok' && item.targetRelativePath !== undefined && item.targetRelativePath !== null) {
-        return item.targetRelativePath
-      }
-    }
-    return null
-  }, [])
-
-  const revealSuccessfulTarget = useCallback(
-    async (result: FileOperationBatchResult) => {
-      const target = firstSuccessfulTarget(result)
-      if (target === null) return
-      await refreshLoadedDirectories()
-      await revealEntry(target, true)
-      onPathChange(target)
-    },
-    [firstSuccessfulTarget, onPathChange, refreshLoadedDirectories, revealEntry]
-  )
-
-  /** 重命名单个条目。只接受「当前选择就是这一项」，多选时不执行。 */
-  const renameSelected = useCallback(
-    async (entry: FileEntry) => {
-      const selection = selectedPathList()
-      if (selection.length !== 1 || selection[0] !== entry.relativePath || operationBusy) return
-      const nextName = window.prompt('将项目内条目重命名为：', entry.name)
-      if (nextName === null) return
-
-      setOperationBusy(true)
-      setOperationNotice(null)
-      try {
-        const result = await window.workbench.file.rename({
-          projectId,
-          relativePath: entry.relativePath,
-          newName: nextName
-        })
-        if (result.status !== 'ok' || result.targetRelativePath === null) {
-          setOperationNotice({ tone: 'error', title: result.message, details: [] })
-          return
-        }
-
-        setOperationNotice({ tone: 'success', title: result.message, details: [] })
-        generationRef.current += 1
-        selectedEntryRef.current = null
-        setDirs({})
-        setExpanded(new Set())
-        clearSelection()
-        onPathChange(result.targetRelativePath)
-        await revealEntry(result.targetRelativePath, true)
-      } catch (error) {
-        setOperationNotice({
-          tone: 'error',
-          title: error instanceof Error ? error.message : String(error),
-          details: []
-        })
-      } finally {
-        setOperationBusy(false)
-      }
-    },
-    [clearSelection, onPathChange, operationBusy, projectId, revealEntry, selectedPathList]
-  )
-
-  /** 新建空文件／空文件夹；`target` 由调用方给出（工具栏用当前目标目录，右键菜单用条目所在目录） */
-  const createNewEntry = useCallback(
-    async (kind: 'file' | 'directory', target: string) => {
-      if (!trusted || operationBusy) return
-      const label = kind === 'file' ? '文件' : '文件夹'
-      const name = window.prompt(`在「${target.length === 0 ? '项目根' : target}」中新建${label}：`)
-      if (name === null) return
-
-      setOperationBusy(true)
-      setOperationNotice(null)
-      try {
-        const result = await window.workbench.file.create({
-          projectId,
-          parentRelativePath: target,
-          name,
-          kind
-        })
-        setOperationNotice(operationReport(result, `新建${label}`))
-        await revealSuccessfulTarget(result)
-      } catch (error) {
-        setOperationNotice({
-          tone: 'error',
-          title: error instanceof Error ? error.message : String(error),
-          details: []
-        })
-      } finally {
-        setOperationBusy(false)
-      }
-    },
-    [operationBusy, projectId, revealSuccessfulTarget, trusted]
-  )
-
-  const setClipboardFromSelection = useCallback(
-    (mode: ClipboardMode) => {
-      const paths = selectedPathList()
-      if (paths.length === 0 || !trusted) return
-      clipboardRef.current = { mode, paths }
-      setOperationNotice({
-        tone: 'success',
-        title: `${mode === 'copy' ? '已复制' : '已剪切'} ${paths.length} 项，选择目标目录后点击「粘贴」。`,
-        details: []
-      })
-    },
-    [selectedPathList, trusted]
-  )
-
-  /** 粘贴：`target` 由调用方显式给出（右键哪一行就粘到哪个目录） */
-  const pasteClipboard = useCallback(
-    async (target: string) => {
-      const clipboard = clipboardRef.current
-      if (clipboard === null || clipboard.paths.length === 0 || !trusted || operationBusy) return
-
-      setOperationBusy(true)
-      setOperationNotice(null)
-      try {
-        const result = await window.workbench.file.transfer({
-          projectId,
-          relativePaths: clipboard.paths,
-          targetDirectory: target,
-          mode: clipboard.mode
-        })
-        setOperationNotice(operationReport(result, clipboard.mode === 'copy' ? '复制粘贴' : '剪切粘贴'))
-        if (clipboard.mode === 'move') {
-          const remaining = result.items.filter((item) => item.status !== 'ok').map((item) => item.relativePath)
-          clipboardRef.current = remaining.length === 0 ? null : { mode: 'move', paths: remaining }
-        }
-        if (result.ok > 0) await revealSuccessfulTarget(result)
-      } catch (error) {
-        setOperationNotice({
-          tone: 'error',
-          title: error instanceof Error ? error.message : String(error),
-          details: []
-        })
-      } finally {
-        setOperationBusy(false)
-      }
-    },
-    [operationBusy, projectId, revealSuccessfulTarget, trusted]
-  )
-
-  /** 删除：一律进系统回收站，不可回收时整批停止并说明（语义见主进程 file-access） */
-  const deleteSelected = useCallback(async () => {
-    const paths = selectedPathList()
-    if (paths.length === 0 || !trusted || operationBusy) return
-    const previewPaths = paths
-      .slice(0, 8)
-      .map((path) => `• ${path}`)
-      .join('\n')
-    const suffix = paths.length > 8 ? `\n…以及另外 ${paths.length - 8} 项` : ''
-    if (
-      !window.confirm(
-        `将所选 ${paths.length} 项发送到系统回收站？\n\n${previewPaths}${suffix}\n\n项目根与 .git 元数据不会被删除。`
-      )
-    ) {
-      return
-    }
-
-    setOperationBusy(true)
-    setOperationNotice(null)
-    try {
-      const result = await window.workbench.file.deleteToTrash({ projectId, relativePaths: paths })
-      setOperationNotice(operationReport(result, '删除'))
-      await refreshLoadedDirectories()
-      keepFailedSelection(result)
-    } catch (error) {
-      setOperationNotice({
-        tone: 'error',
-        title: error instanceof Error ? error.message : String(error),
-        details: []
-      })
-    } finally {
-      setOperationBusy(false)
-    }
-  }, [keepFailedSelection, operationBusy, projectId, refreshLoadedDirectories, selectedPathList, trusted])
-
-  // 预览更新后恢复滚动位置（外部保存后重载不应跳回顶部）
-  // biome-ignore lint/correctness/useExhaustiveDependencies: preview 是刻意的触发依赖——效果体只读 ref，但必须在预览重载落定后重新写入滚动位置
-  useEffect(() => {
-    const body = previewHostRef.current?.querySelector('.preview-body')
-    if (body === undefined || body === null) return
-    body.scrollTop = previewScrollRef.current
-  }, [preview])
-
-  // 文件变化信号：重新读取已加载的目录，并在当前预览的文件被改动时重载预览
-  useEffect(() => {
-    if (refreshToken === 0) return
-    const captured = previewScrollRef.current
-    const current = selectedEntryRef.current
-
-    void (async () => {
-      await Promise.all(['', ...expandedRef.current].map((directory) => loadDirectory(directory)))
-      if (current === null) return
-
-      const body = previewHostRef.current?.querySelector('.preview-body')
-      previewScrollRef.current = body?.scrollTop ?? captured
-      openPreview(current, true)
-    })()
-  }, [loadDirectory, openPreview, refreshToken])
-
-  /* ---------- 展开与收起 ---------- */
-
-  const toggleDirectory = useCallback(
-    (relativePath: string) => {
-      setExpanded((current) => {
-        const next = new Set(current)
-        if (next.has(relativePath)) {
-          next.delete(relativePath)
-        } else {
-          next.add(relativePath)
-          if (dirs[relativePath] === undefined) void loadDirectory(relativePath)
-        }
-        return next
-      })
-    },
-    [dirs, loadDirectory]
-  )
-
-  useEffect(() => {
-    expandedRef.current = expanded
-  }, [expanded])
-
-  const collapseAll = useCallback(() => {
-    setExpanded(new Set())
-  }, [])
-
-  const refreshAll = useCallback(() => {
-    void Promise.all(['', ...expanded].map((directory) => loadDirectory(directory)))
-  }, [expanded, loadDirectory])
-
-  /* ---------- 选择 ---------- */
-
-  const selectEntry = useCallback(
-    (entry: FileEntry, additive: boolean) => {
-      const current = selectedPathsRef.current
-      const next = additive ? new Set(current) : new Set<string>()
-      if (additive && next.has(entry.relativePath)) {
-        next.delete(entry.relativePath)
-      } else {
-        next.add(entry.relativePath)
-      }
-      selectedPathsRef.current = next
-      setSelectedPaths(next)
-
-      if (!next.has(entry.relativePath)) {
-        setSelectedPath(null)
-        setSelectedEntry(null)
-        selectedEntryRef.current = null
-        setPreview(null)
-        onPathChange('')
-        return
-      }
-
-      selectedEntryRef.current = entry
-      setSelectedPath(entry.relativePath)
-      setSelectedEntry(entry)
-      setCursorPath(entry.relativePath)
-      appliedRef.current = entry.relativePath
-      onPathChange(entry.relativePath)
-      if (entry.kind === 'file') openPreview(entry)
-    },
-    [onPathChange, openPreview]
-  )
-
-  /**
-   * 行点击：与资源管理器一致——点击文件夹即展开／收起，不需要瞄准箭头。
-   *
-   * `event.detail > 1` 是双击产生的第二次点击，直接忽略：
-   * 否则一次双击会「展开又收起」，视觉上等于没有反应。
-   */
-  const handleRowClick = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>, entry: FileEntry) => {
-      if (event.detail > 1) return
-      const additive = event.ctrlKey || event.metaKey
-      selectEntry(entry, additive)
-      // Ctrl/Cmd-click 用于多选，不改变目录展开状态；普通点击保持资源管理器语义。
-      if (!additive && entry.kind === 'directory') toggleDirectory(entry.relativePath)
-    },
-    [selectEntry, toggleDirectory]
-  )
-
-  /* ---------- 展开为扁平行列表 ---------- */
-
-  const rows = useMemo(() => {
-    const output: Row[] = []
-    const walk = (path: string, depth: number): void => {
-      const state = dirs[path]
-      if (state === undefined) return
-
-      if (state.error !== null && state.result === null) {
-        output.push({ kind: 'note', depth, text: state.error, tone: 'error' })
-        return
-      }
-      const result = state.result
-      if (result === null) {
-        if (state.status === 'loading') output.push({ kind: 'note', depth, text: '正在读取…', tone: 'plain' })
-        return
-      }
-      if (result.entries.length === 0) {
-        output.push({ kind: 'note', depth, text: '空目录', tone: 'plain' })
-        return
-      }
-
-      for (const entry of result.entries) {
-        output.push({ kind: 'entry', depth, entry })
-        if (entry.kind === 'directory' && expanded.has(entry.relativePath)) {
-          walk(entry.relativePath, depth + 1)
-        }
-      }
-      if (result.truncated) {
-        output.push({ kind: 'note', depth, text: '条目超过 2000 个，已截断', tone: 'plain' })
-      }
-    }
-    walk('', 0)
-    return output
-  }, [dirs, expanded])
-
-  /* ---------- 面包屑：定位到当前选中项 ---------- */
-
-  const breadcrumb = useMemo(() => {
-    if (selectedPath === null) return []
-    const segments = selectedPath.split('/').filter((segment) => segment.length > 0)
-    const trail: Array<{ name: string; relativePath: string }> = []
-    let accumulated = ''
-    for (const segment of segments) {
-      accumulated = accumulated.length === 0 ? segment : `${accumulated}/${segment}`
-      trail.push({ name: segment, relativePath: accumulated })
-    }
-    return trail
-  }, [selectedPath])
+  const { operationBusy, operationNotice, setOperationNotice, clipboardRef } = operations
+  const { createNewEntry, renameSelected, setClipboardFromSelection, pasteClipboard, deleteSelected } = operations
 
   /* ---------- 针对条目的动作（右键菜单与工具栏共用） ---------- */
 
@@ -622,29 +206,32 @@ export function FileBrowser({
         setOperationNotice({ tone: 'error', title: '打开失败', details: [error] })
       }
     },
-    [projectId]
+    [projectId, setOperationNotice]
   )
 
   /** 复制条目相对路径到系统剪贴板（G3）。相对路径不离开本项目，无需主进程。 */
-  const copyPaths = useCallback(async (paths: string[]) => {
-    if (paths.length === 0) return
-    const text = paths.join('\n')
-    const done = (): void =>
-      setOperationNotice({ tone: 'success', title: `已复制 ${paths.length} 个路径`, details: paths })
-    try {
-      if (navigator.clipboard?.writeText !== undefined) {
-        await navigator.clipboard.writeText(text)
-        done()
-      } else if (legacyCopy(text)) {
-        done()
-      } else {
-        setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
+  const copyPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return
+      const text = paths.join('\n')
+      const done = (): void =>
+        setOperationNotice({ tone: 'success', title: `已复制 ${paths.length} 个路径`, details: paths })
+      try {
+        if (navigator.clipboard?.writeText !== undefined) {
+          await navigator.clipboard.writeText(text)
+          done()
+        } else if (legacyCopy(text)) {
+          done()
+        } else {
+          setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
+        }
+      } catch {
+        if (legacyCopy(text)) done()
+        else setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
       }
-    } catch {
-      if (legacyCopy(text)) done()
-      else setOperationNotice({ tone: 'error', title: '复制失败', details: ['无法写入系统剪贴板'] })
-    }
-  }, [])
+    },
+    [setOperationNotice]
+  )
 
   /* ---------- 右键上下文菜单（界面重构三项·阶段 3） ---------- */
 
@@ -666,7 +253,12 @@ export function FileBrowser({
   const blankMenu = useCallback(
     (): ContextMenuItem[] =>
       buildBlankMenu({
-        targetDirectory,
+        targetDirectory:
+          selectedEntry === null
+            ? ''
+            : selectedEntry.kind === 'directory'
+              ? selectedEntry.relativePath
+              : parentDirectoryOf(selectedEntry.relativePath),
         trusted,
         writeTitle,
         clipboard: clipboardRef.current,
@@ -686,6 +278,7 @@ export function FileBrowser({
         deleteSelected
       }),
     [
+      clipboardRef,
       copyPaths,
       createNewEntry,
       deleteSelected,
@@ -697,9 +290,9 @@ export function FileBrowser({
       refreshAll,
       renameSelected,
       revealInSystem,
+      selectedEntry,
       selectedPathList,
       setClipboardFromSelection,
-      targetDirectory,
       toggleDirectory,
       trusted,
       writeTitle
@@ -715,7 +308,7 @@ export function FileBrowser({
           editorPath,
           editorTitle,
           expanded,
-          selectedCount,
+          selectedCount: selectedPaths.size,
           clipboard: clipboardRef.current,
           selectedPathList,
           createNewEntry,
@@ -735,6 +328,7 @@ export function FileBrowser({
         entry
       ),
     [
+      clipboardRef,
       copyPaths,
       createNewEntry,
       deleteSelected,
@@ -749,7 +343,7 @@ export function FileBrowser({
       refreshAll,
       renameSelected,
       revealInSystem,
-      selectedCount,
+      selectedPaths,
       selectedPathList,
       setClipboardFromSelection,
       toggleDirectory,
@@ -769,7 +363,7 @@ export function FileBrowser({
       if (!selectedPathsRef.current.has(entry.relativePath)) selectEntry(entry, false)
       setMenu({ x, y, items: entryMenu(entry), returnFocusTo })
     },
-    [entryMenu, selectEntry]
+    [entryMenu, selectEntry, selectedPathsRef]
   )
 
   /** 右键空白处：作用于当前目标目录（未选中条目时为项目根） */
@@ -792,6 +386,19 @@ export function FileBrowser({
     [openMenuForEntry]
   )
 
+  const keyboardNav = useTreeKeyboardNav({
+    rows,
+    cursorPath,
+    setCursorPath,
+    expanded,
+    selectEntry,
+    toggleDirectory,
+    openPreview,
+    openMenuForKeyboard,
+    rowRefs
+  })
+  const { handleTreeKeyDown, focusableRows } = keyboardNav
+
   /**
    * 面包屑「项目根」：清空选择回到根视野。
    *
@@ -805,9 +412,18 @@ export function FileBrowser({
     setSelectedPath(null)
     setSelectedEntry(null)
     selectedEntryRef.current = null
-    setPreview(null)
+    clearPreview()
     onPathChange('')
-  }, [onPathChange])
+  }, [
+    appliedRef,
+    clearPreview,
+    onPathChange,
+    selectedEntryRef,
+    selectedPathsRef,
+    setSelectedEntry,
+    setSelectedPath,
+    setSelectedPaths
+  ])
 
   /** 右键条目：先阻止默认菜单，再按光标位置开该条目的菜单（选中逻辑见 openMenuForEntry） */
   const handleRowContextMenu = useCallback(
@@ -840,111 +456,74 @@ export function FileBrowser({
     setMenu({ x: Math.round(rect.left), y: Math.round(rect.bottom + 4), returnFocusTo: anchor, items })
   }, [])
 
-  /* ---------- 键盘树导航（ARIA tree：漫游 tabindex + 方向键） ---------- */
+  /* ---------- 初始加载与视图状态恢复 ---------- */
 
-  /** 可见的条目行（去掉提示行），顺序即视觉顺序，供 ↑/↓/Home/End 遍历 */
-  const focusableRows = useMemo(
-    () => rows.filter((row): row is Extract<Row, { kind: 'entry' }> => row.kind === 'entry'),
-    [rows]
-  )
+  // 项目切换（loadDirectory 身份变化）时整树重置：作废在途响应，清空选择与预览
+  useEffect(() => {
+    resetTree()
+    resetSelection()
+    clearPreview()
+    void loadDirectory('')
+  }, [clearPreview, loadDirectory, resetSelection, resetTree])
 
-  const handleTreeKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      const list = focusableRows
-      if (list.length === 0) return
-      const currentIndex = cursorPath === null ? -1 : list.findIndex((row) => row.entry.relativePath === cursorPath)
+  useEffect(() => {
+    if (appliedRef.current === initialPath) return
+    appliedRef.current = initialPath
+    if (initialPath.length === 0) return
+    void revealEntry(initialPath, true)
+  }, [appliedRef, initialPath, revealEntry])
 
-      const focusRow = (index: number): void => {
-        const row = list[Math.max(0, Math.min(index, list.length - 1))]
-        if (row === undefined) return
-        setCursorPath(row.entry.relativePath)
-        selectEntry(row.entry, false)
-        rowRefs.current.get(row.entry.relativePath)?.focus()
-      }
+  // 文件变化信号：重新读取已加载的目录，并在当前预览的文件被改动时重载预览
+  useEffect(() => {
+    if (refreshToken === 0) return
+    const captured = previewScrollRef.current
+    const current = selectedEntryRef.current
 
-      switch (event.key) {
-        case 'ArrowDown':
-          event.preventDefault()
-          focusRow(currentIndex + 1)
-          break
-        case 'ArrowUp':
-          event.preventDefault()
-          focusRow(currentIndex - 1)
-          break
-        case 'Home':
-          event.preventDefault()
-          focusRow(0)
-          break
-        case 'End':
-          event.preventDefault()
-          focusRow(list.length - 1)
-          break
-        case 'ArrowRight': {
-          if (cursorPath === null) {
-            event.preventDefault()
-            focusRow(0)
-            return
-          }
-          const entry = list[currentIndex]?.entry
-          if (entry === undefined) return
-          event.preventDefault()
-          if (entry.kind === 'directory' && !expanded.has(entry.relativePath)) {
-            toggleDirectory(entry.relativePath) // 展开；子项按需异步加载，先保持焦点在本行
-          } else if (entry.kind === 'directory') {
-            focusRow(currentIndex + 1) // 已展开 → 移到第一个子项
-          }
-          break
-        }
-        case 'ArrowLeft': {
-          if (cursorPath === null) return
-          const entry = list[currentIndex]?.entry
-          if (entry === undefined) return
-          event.preventDefault()
-          if (entry.kind === 'directory' && expanded.has(entry.relativePath)) {
-            toggleDirectory(entry.relativePath) // 已展开 → 先收起
-            return
-          }
-          // 文件或已收起的目录 → 跳到父目录
-          const parent = parentDirectoryOf(entry.relativePath)
-          const parentIndex = list.findIndex((row) => row.entry.relativePath === parent)
-          if (parentIndex >= 0) {
-            setCursorPath(parent)
-            const parentEntry = list[parentIndex]?.entry
-            if (parentEntry !== undefined) selectEntry(parentEntry, false)
-            rowRefs.current.get(parent)?.focus()
-          }
-          break
-        }
-        case 'Enter':
-        case ' ': {
-          if (cursorPath === null) {
-            event.preventDefault()
-            focusRow(0)
-            return
-          }
-          const entry = list[currentIndex]?.entry
-          if (entry === undefined) return
-          event.preventDefault()
-          selectEntry(entry, false)
-          if (entry.kind === 'directory') toggleDirectory(entry.relativePath)
-          else openPreview(entry)
-          break
-        }
-        case 'F10':
-        case 'ContextMenu': {
-          // Shift+F10／Menu 键是「右键」的键盘等价物：给焦点行开出同一套菜单。
-          // 一律阻止默认——否则取不到条目时浏览器会把原生菜单弹出来。
-          event.preventDefault()
-          const entry = cursorPath === null ? undefined : list[currentIndex]?.entry
-          if (entry === undefined) return
-          openMenuForKeyboard(entry)
-          break
-        }
-        default:
-          break
-      }
+    void (async () => {
+      await Promise.all(['', ...expandedRef.current].map((directory) => loadDirectory(directory)))
+      if (current === null) return
+
+      const body = previewHostRef.current?.querySelector('.preview-body')
+      previewScrollRef.current = body?.scrollTop ?? captured
+      openPreview(current, true)
+    })()
+  }, [expandedRef, loadDirectory, openPreview, previewHostRef, previewScrollRef, refreshToken, selectedEntryRef])
+  const targetDirectory =
+    selectedEntry === null
+      ? ''
+      : selectedEntry.kind === 'directory'
+        ? selectedEntry.relativePath
+        : parentDirectoryOf(selectedEntry.relativePath)
+
+  /* ---------- 面包屑：定位到当前选中项 ---------- */
+
+  const breadcrumb = useMemo(() => {
+    if (selectedPath === null) return []
+    const segments = selectedPath.split('/').filter((segment) => segment.length > 0)
+    const trail: Array<{ name: string; relativePath: string }> = []
+    let accumulated = ''
+    for (const segment of segments) {
+      accumulated = accumulated.length === 0 ? segment : `${accumulated}/${segment}`
+      trail.push({ name: segment, relativePath: accumulated })
+    }
+    return trail
+  }, [selectedPath])
+
+  /**
+   * 行点击：与资源管理器一致——点击文件夹即展开／收起，不需要瞄准箭头。
+   *
+   * `event.detail > 1` 是双击产生的第二次点击，直接忽略：
+   * 否则一次双击会「展开又收起」，视觉上等于没有反应。
+   */
+  const handleRowClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>, entry: FileEntry) => {
+      if (event.detail > 1) return
+      const additive = event.ctrlKey || event.metaKey
+      selectEntry(entry, additive)
+      // Ctrl/Cmd-click 用于多选，不改变目录展开状态；普通点击保持资源管理器语义。
+      if (!additive && entry.kind === 'directory') toggleDirectory(entry.relativePath)
     },
-    [cursorPath, focusableRows, openMenuForKeyboard, selectEntry, toggleDirectory, expanded, openPreview]
+    [selectEntry, toggleDirectory]
   )
 
   /** 拖拽分栏时限制范围：右侧预览区始终保留可用宽度 */
@@ -1017,15 +596,12 @@ export function FileBrowser({
           ) : (
             <PreviewPane
               projectId={projectId}
-              preview={preview}
+              preview={currentPreview}
               loading={loadingPreview}
               onNavigateProjectPath={onNavigateProjectPath}
               onDismiss={() => {
-                selectedEntryRef.current = null
-                setSelectedPath(null)
-                setSelectedEntry(null)
-                setPreview(null)
-                previewScrollRef.current = 0
+                clearEntry()
+                dismissPreview()
               }}
             />
           )}
