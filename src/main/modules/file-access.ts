@@ -22,14 +22,32 @@ import type {
   RenameEntryResult,
   TransferEntriesResult
 } from '@shared/types'
+import { checkRelativeShape, isSameLocation } from '../security/path-guard'
+import { normalizeEntryName, normalizeRenameName } from './entry-name'
 import {
-  checkRelativeShape,
-  isProtectedEntry,
-  isSameLocation,
-  type PathRejection,
-  type ResolveOptions,
-  resolveProjectPath
-} from '../security/path-guard'
+  classifyError,
+  classifyWriteError,
+  codeOf,
+  discriminateTrashFailure,
+  rawMessageOf
+} from './file-op-errors'
+import {
+  resolveDirectoryForWrite,
+  resolveForWrite,
+  writtenTargetIntact,
+  type FileRejection,
+  type WriteGuardWording
+} from './write-guard'
+
+/**
+ * 再导出：保持本模块的公开导出面不变。
+ *
+ * `classifyError` / `discriminateTrashFailure` 的实现已移至 `file-op-errors.ts`（重构，
+ * 行为不变），但验证脚本与调用方一直从 `file-access.ts` 导入它们；这里经 barrel
+ * 再导出，导入方零改动。
+ */
+export { classifyError, discriminateTrashFailure } from './file-op-errors'
+export type { TrashFailureDecision } from './file-op-errors'
 
 /**
  * 文件访问模块 —— 删除与失败处理（设计稿第 7 章，推进计划 M0-5）。
@@ -43,6 +61,12 @@ import {
  *
  * 回收站能力通过参数注入（`TrashFn`），因此本模块不导入 Electron，可在纯 Node 下
  * 测试；主进程注入 `shell.trashItem`。
+ *
+ * 模块拆分（重构，行为不变；公开导出面经 barrel 再导出保持不变）：
+ * - `write-guard.ts`    「相对路径 → 可写真实路径」的判定顺序（四步守卫 + 执行后复核）；
+ * - `file-op-errors.ts` errno 与回收站失败的「原因 + 文案」翻译；
+ * - `entry-name.ts`     新建与重命名的单段名称校验。
+ * 本文件只保留四个写入口的流程编排与各自的守卫措辞。
  */
 
 /** 回收站能力。主进程注入 `shell.trashItem`。 */
@@ -50,174 +74,6 @@ export type TrashFn = (absolutePath: string) => Promise<void>
 
 /** 单次批量操作的项数上限，防止误操作放大到不可收拾的规模。 */
 export const MAX_BATCH_ITEMS = 500
-
-/** 已知的「项级」错误码：属于该目标自身的问题，不影响后续项继续执行。 */
-const ITEM_LEVEL_CODES = new Set([
-  'ENOENT',
-  'EACCES',
-  'EPERM',
-  'EBUSY',
-  'ENOTEMPTY',
-  'EEXIST',
-  'EROFS',
-  'EISDIR',
-  'ENOTDIR',
-  'ENAMETOOLONG',
-  'EMFILE',
-  'ENFILE'
-])
-
-interface ClassifiedError {
-  reason: FileOperationReason
-  message: string
-}
-
-function rawMessageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function codeOf(error: unknown): string | null {
-  const code = (error as NodeJS.ErrnoException | null)?.code
-  return typeof code === 'string' ? code : null
-}
-
-/**
- * errno 的解释语境。
- *
- * 同一错误码在两类专业操作里含义不同：送入回收站失败时 `EEXIST`/`ENOTEMPTY` 指向
- * 目标自身被占用（回收站无法安置它）；写入目标时它们指向「目标名称已被占用」。
- * 因此映射按语境分列在同一张表里——历史上这两处曾各自维护而悄悄分歧。
- */
-type ErrnoContext = 'trash' | 'write'
-
-const ERRNO_REASONS: Record<ErrnoContext, Record<string, FileOperationReason>> = {
-  trash: {
-    ENOENT: 'not-found',
-    EACCES: 'permission-denied',
-    EPERM: 'permission-denied',
-    EBUSY: 'in-use',
-    ENOTEMPTY: 'in-use',
-    EEXIST: 'in-use',
-    EROFS: 'read-only'
-  },
-  write: {
-    EEXIST: 'name-conflict',
-    ENOTEMPTY: 'name-conflict',
-    ENOENT: 'not-found',
-    EACCES: 'permission-denied',
-    EPERM: 'permission-denied',
-    EBUSY: 'in-use',
-    EROFS: 'read-only'
-  }
-}
-
-/** 面向用户的说明。`action` 只在 write 语境参与措辞（「新建文件」「复制」等）。 */
-type ErrnoMessageBuilder = (action: string, raw: string) => string
-
-const ERRNO_MESSAGES: Record<ErrnoContext, Partial<Record<FileOperationReason, ErrnoMessageBuilder>>> = {
-  trash: {
-    'not-found': (_action, raw) => `目标不存在或已被移动，未执行删除：${raw}`,
-    'permission-denied': (_action, raw) => `没有权限完成该操作，源文件已保留：${raw}`,
-    'in-use': (_action, raw) => `目标被占用或目录非空，源文件已保留：${raw}`,
-    'read-only': (_action, raw) => `目标位于只读位置，源文件已保留：${raw}`,
-    'io-error': (_action, raw) => raw
-  },
-  write: {
-    'name-conflict': (_action, raw) => `目标名称已存在，未覆盖现有项：${raw}`,
-    'not-found': (action, raw) => `${action}所需的源项或目标父目录不存在，源项已保留：${raw}`,
-    'permission-denied': (action, raw) => `没有权限完成${action}，源项已保留：${raw}`,
-    'in-use': (action, raw) => `${action}所需的源项或目标目录被占用，源项已保留：${raw}`,
-    'read-only': (action, raw) => `${action}目标位于只读位置，源项已保留：${raw}`,
-    'io-error': (action, raw) => `${action}失败，源项已保留：${raw}`
-  }
-}
-
-/** 把 Node 的 errno 映射为面向用户的失败原因。 */
-function classifyErrno(error: unknown, context: ErrnoContext, action = ''): ClassifiedError {
-  const raw = rawMessageOf(error)
-  const code = codeOf(error)
-  const reason = (code !== null ? ERRNO_REASONS[context][code] : undefined) ?? 'io-error'
-  const build = ERRNO_MESSAGES[context][reason]
-  return { reason, message: build === undefined ? raw : build(action, raw) }
-}
-
-/** 回收站与目标状态检查语境的分类。 */
-export function classifyError(error: unknown): ClassifiedError {
-  return classifyErrno(error, 'trash')
-}
-
-/** 写目标语境的分类；`action` 用于「新建文件」「复制」等措辞。 */
-function classifyWriteError(error: unknown, action: string): ClassifiedError {
-  return classifyErrno(error, 'write', action)
-}
-
-/**
- * 判断回收站失败是否属于「回收站整体不可用」。
- *
- * 实测结论（见 M0 验证记录 M0-5）：Electron 的 `shell.trashItem` 在文件被独占
- * 句柄占用时抛出的是**不带错误码**的 `Error: Operation was aborted`，与「回收站
- * 不可用」在错误码层面无法区分。因此判定分三步：
- *
- *   1. 错误码属于已知项级问题（无权限、被占用等）→ 按项处理。
- *   2. 错误信息明确指向回收站不支持 → 判为不可用。
- *   3. 其余情况用「目标当前是否可访问」区分：目标可读却无法送入回收站，
- *      说明问题在回收站而非目标；目标不可读则属于项级问题。
- */
-export interface TrashFailureDecision {
-  /** 是否应中止整批操作 */
-  abort: boolean
-  reason: FileOperationReason
-  message: string
-}
-
-/** 探测目标当前是否可访问（文件与目录均适用）。 */
-function probeAccessible(
-  absolutePath: string
-): { accessible: true } | { accessible: false; reason: FileOperationReason; message: string } {
-  try {
-    const handle = openSync(absolutePath, 'r')
-    closeSync(handle)
-    return { accessible: true }
-  } catch (error) {
-    const classified = classifyError(error)
-    return {
-      accessible: false,
-      reason: classified.reason === 'io-error' ? 'in-use' : classified.reason,
-      message: classified.message
-    }
-  }
-}
-
-export function discriminateTrashFailure(absolutePath: string, error: unknown): TrashFailureDecision {
-  const code = codeOf(error)
-  const raw = rawMessageOf(error)
-
-  if (code !== null && ITEM_LEVEL_CODES.has(code)) {
-    const classified = classifyError(error)
-    return { abort: false, reason: classified.reason, message: classified.message }
-  }
-
-  if (/not supported|unsupported|not implemented|recycle|trash|回收站/i.test(raw)) {
-    return { abort: true, reason: 'trash-unavailable', message: `无法发送到系统回收站：${raw}` }
-  }
-
-  const probe = probeAccessible(absolutePath)
-  if (!probe.accessible) {
-    return {
-      abort: false,
-      reason: probe.reason,
-      message: `无法发送到系统回收站（${probe.message}），源文件已保留。`
-    }
-  }
-
-  return { abort: true, reason: 'trash-unavailable', message: `无法发送到系统回收站：${raw}` }
-}
-
-/**
- * 文件操作层的路径拒绝码：沿用 path-guard 的取值，并补充 `invalid-path`
- * 用于「形态检查未通过但无法归入具体原因」的情形。
- */
-type FileRejection = PathRejection | 'invalid-path'
 
 function reasonForRejection(rejection: FileRejection): FileOperationReason {
   switch (rejection) {
@@ -275,32 +131,6 @@ function abortBatch(reason: FileOperationReason, message: string): FileOperation
   return { items: [], ok: 0, failed: 0, skipped: 0, aborted: true, abortReason: reason, abortMessage: message }
 }
 
-interface NormalizedEntryName {
-  ok: true
-  normalized: string
-}
-
-interface InvalidEntryName {
-  ok: false
-  message: string
-}
-
-/** 所有新建、复制和重命名入口共用的单段名称校验。 */
-function normalizeEntryName(input: unknown): NormalizedEntryName | InvalidEntryName {
-  if (typeof input !== 'string' || input.length === 0) {
-    return { ok: false, message: '名称不能为空。' }
-  }
-  if (input.includes('/') || input.includes('\\')) {
-    return { ok: false, message: '名称只能是单个文件或文件夹名称，不能包含路径分隔符。' }
-  }
-  const shape = checkRelativeShape(input)
-  if (!shape.ok) return { ok: false, message: `名称不合法：${shape.detail}` }
-  if (shape.normalized.length === 0 || shape.normalized === '.' || shape.normalized === '..') {
-    return { ok: false, message: '名称不能是项目根目录或路径占位符。' }
-  }
-  return { ok: true, normalized: shape.normalized }
-}
-
 function childRelativePath(parent: string, name: string): string {
   return parent.length === 0 ? name : `${parent}/${name}`
 }
@@ -324,135 +154,6 @@ function operationItem(
   return { relativePath, targetRelativePath, status, reason, message }
 }
 
-/** 一个写目标被统一守卫拒绝后的表达。 */
-interface WriteRejection {
-  ok: false
-  /** 拒绝只会是「失败」或「未执行」，不会出现「成功」 */
-  status: Exclude<FileOperationStatus, 'ok'>
-  reason: FileOperationReason
-  message: string
-}
-
-interface WriteTargetOk {
-  ok: true
-  /** 已确认可用于写操作的真实路径 */
-  absolutePath: string
-  /** 折叠 `..` 与重复分隔符之后的项目内相对路径 */
-  relativePath: string
-}
-
-/** 写目标的解析结果：要么拿到可用于磁盘操作的真实路径，要么带着可直接上报的拒绝。 */
-type WriteTarget = WriteTargetOk | WriteRejection
-
-interface WriteGuardWording {
-  /** 路径链上有符号链接或目录联接 */
-  viaReparsePoint: string
-  /** 命中项目根或 `.git` 元数据 */
-  protectedEntry: (normalized: string) => string
-  /** 形态、归属或类型检查未通过 */
-  unresolvable: (
-    input: string,
-    rejection: FileRejection,
-    detail: string
-  ) => {
-    reason: FileOperationReason
-    message: string
-  }
-}
-
-interface WriteGuardOptions extends ResolveOptions {
-  /** 目录类目标允许就是项目根（新建的父目录、粘贴目标目录）；项级目标不允许 */
-  allowProjectRoot?: boolean
-  wording: WriteGuardWording
-}
-
-/** 受保护项按「未执行」报告，其余写拒绝按「失败」。 */
-function rejectProtected(message: string): WriteRejection {
-  return { ok: false, status: 'skipped', reason: 'protected-entry', message }
-}
-
-function rejectWrite(reason: FileOperationReason, message: string): WriteRejection {
-  return { ok: false, status: 'failed', reason, message }
-}
-
-/**
- * 写操作目标解析——所有会改动磁盘的路径都只经此入口取得绝对路径。
- *
- * 判定顺序即安全边界，四步缺一不可：
- * 1. 原始输入命中项目根或 `.git` → 拒绝；
- * 2. 形态与归属检查（穿越、绝对路径、项目外、目录类型）；
- * 3. 路径链上存在符号链接或目录联接 → 拒绝，写操作不经过链接；
- * 4. **折叠 `..` 之后再查一次受保护项**。
- *
- * 第 4 步不是冗余：`sub/../.git` 的原始输入首段是 `sub`，只有第 4 步能看出它
- * 归一化后就是 `.git`。缺这一步会让「`.git` 元数据不提供写操作」这条边界失效。
- */
-function resolveForWrite(projectRoot: string, input: string, options: WriteGuardOptions): WriteTarget {
-  const allowProjectRoot = options.allowProjectRoot ?? false
-  const { wording } = options
-
-  const isProtected = (candidate: string): boolean =>
-    candidate.length > 0 ? isProtectedEntry(candidate) : !allowProjectRoot
-
-  if (isProtected(input)) {
-    return rejectProtected(wording.protectedEntry(input))
-  }
-
-  const resolution = resolveProjectPath(projectRoot, input, {
-    mustExist: options.mustExist,
-    expect: options.expect
-  })
-  if (!resolution.ok || resolution.absolutePath === null) {
-    const rejection = resolution.rejection ?? 'invalid-path'
-    const detail = wording.unresolvable(input, rejection, resolution.detail)
-    return rejectWrite(detail.reason, detail.message)
-  }
-  if (resolution.viaReparsePoint) {
-    return rejectWrite('invalid-path', wording.viaReparsePoint)
-  }
-  if (isProtected(resolution.normalized)) {
-    return rejectProtected(wording.protectedEntry(resolution.normalized))
-  }
-
-  return {
-    ok: true,
-    absolutePath: resolution.absolutePath,
-    relativePath: resolution.normalized
-  }
-}
-
-/** 目录类写目标（新建的父目录、粘贴目标目录）；空串表示项目根。 */
-function resolveDirectoryForWrite(projectRoot: string, relativePath: string, wording: WriteGuardWording): WriteTarget {
-  return resolveForWrite(projectRoot, relativePath.length > 0 ? relativePath : '.', {
-    mustExist: true,
-    expect: 'directory',
-    allowProjectRoot: true,
-    wording
-  })
-}
-
-/**
- * 执行后复核：目标必须仍然存在、类型符合预期、真实路径与执行前一致，且路径链上
- * 没有出现链接。`unstable` 供各入口补充自身条件（如「剪切后源项必须已消失」）。
- *
- * 只要这里返回 false，调用方就**不得报告成功**——系统调用返回不等于用户可确认的结果。
- */
-function writtenTargetIntact(
-  projectRoot: string,
-  targetRelativePath: string,
-  expect: 'any' | 'file' | 'directory',
-  absolutePathBefore: string,
-  unstable?: () => boolean
-): boolean {
-  const targetAfter = resolveProjectPath(projectRoot, targetRelativePath, { mustExist: true, expect })
-  return !!(
-    targetAfter.ok &&
-    targetAfter.absolutePath !== null &&
-    !targetAfter.viaReparsePoint &&
-    isSameLocation(targetAfter.absolutePath, absolutePathBefore) &&
-    !unstable?.()
-  )
-}
 
 /** 删除入口的守卫文案。 */
 const DELETE_WORDING: WriteGuardWording = {
@@ -912,12 +613,6 @@ export interface RenameEntryRequest {
   newName: unknown
   /** 不可信项目默认只读 */
   trusted: boolean
-}
-
-function normalizeRenameName(input: unknown): NormalizedEntryName | InvalidEntryName {
-  const result = normalizeEntryName(input)
-  if (!result.ok) return { ok: false, message: `新名称不合法：${result.message}` }
-  return result
 }
 
 function renameFailure(
