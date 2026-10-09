@@ -142,15 +142,18 @@ release/本地项目工作台-0.1.0-setup.exe /S /D=C:\Apps\local-project-workbe
 │  │  └─ modules/          app-settings / project-registry / file-access /
 │  │                       file-browser / markdown-* / code-highlight / git-* /
 │  │                       diff-service / file-watcher / remote-image /
-│  │                       pty-session / quit-coordinator
+│  │                       pty-session / quit-coordinator / write-guard /
+│  │                       file-op-errors / entry-name
 │  ├─ preload/             白名单桥接层（不暴露原始 ipcRenderer）
 │  ├─ renderer/            React 界面
 │  │  ├─ pages/            项目库、项目首页、设置页
-│  │  ├─ components/       项目侧边栏、文件树、右键菜单、预览、差异、终端、尺寸手柄等
+│  │  ├─ components/       项目侧边栏、文件树（FileTree + file-browser/ 纯函数）、
+│  │  │                    右键菜单、预览、差异、终端、尺寸手柄等
+│  │  ├─ hooks/            文件栏状态 hooks：预览／树数据／选择／写操作／键盘导航
 │  │  └─ styles/           样式表按页面／组件拆分；styles.css 为 @import 入口
 │  │                       （顺序即层叠顺序；menu.css 在末端，属覆盖型浮层）
 │  └─ shared/              IPC 契约与数据对象类型
-├─ scripts/                验证脚本、打包辅助与 TS 加载钩子（不参与打包）
+├─ scripts/                验证脚本、打包辅助、文件体积守卫与 TS 加载钩子（不参与打包）
 ├─ docs/
 │  └─ design/              产品设计讨论稿（Markdown 基线，v0.1–v0.4）
 ├─ build/                  Electron 裁剪运行时（由 prepare-electron-dist 生成）
@@ -202,6 +205,7 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 - 未信任项目一律拒绝**写操作与终端创建**——终端同样以登记表的 `trusted` 为准，渲染层声明的任何字段都不参与判定。
 - 删除一律进系统回收站；不可回收时停止并说明。
 - 限制页面导航与窗口创建；外链仅允许 http/https 并交给系统浏览器。
+- **平台边界**：路径形态检查中的备用数据流（ADS）、Windows 保留设备名、尾点尾空格三项拒绝规则仅 Windows 生效——它们是 Win32 路径语义的防护，不是通用规则。应用以 Windows 为一等平台（C01），POSIX 上的路径防护按该平台的合法字符语义退化，**不作为支持目标**（详见「已知限制」）。
 
 ---
 
@@ -249,7 +253,7 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 <summary>验证体系：17 个验证套件 + 2 项性能实测 / 675 项断言</summary>
 
 ```bash
-npm run verify:all          # 静态检查 + 类型检查 + 构建 + 全部验证套件 + 端到端（推荐）
+npm run verify:all          # 静态检查 + 体积守卫 + 类型检查 + 构建 + 全部验证套件 + 端到端（推荐）
 ```
 
 各套件可单独运行：
@@ -286,8 +290,8 @@ npm run verify:all          # 静态检查 + 类型检查 + 构建 + 全部验�
 - 端到端脚本会关闭窗口的后台节流（`setBackgroundThrottling(false)`）：无显示会话的环境里窗口不会被判定为「可见」，Chromium 会据此节流动画与计时器。该设置只作用于验证期间，不改变应用自身的节流策略。
 - 端到端脚本按**三个阶段各派生一次真实进程**验证启动位置（C09），阶段之间只通过应用数据目录里的 `settings.json` 传递状态——「重启后恢复」是真实重启，不是内存里模拟跳转。
 - 若所在环境拒绝 npm 派生 `cmd.exe`（`EACCES`），`npm run verify:all` 会在第一行失败且**与项目无关**；此时逐条直接调用本地二进制（`./node_modules/.bin/biome lint`、`./node_modules/.bin/electron-vite build`、`node scripts/verify-*.mts`）即为等价的全链验证。
-- 已知问题 I-1：node-pty 在会话退出清理阶段输出 `AttachConsole failed` 堆栈，已定位为噪音级，不影响会话关闭与进程树清理。
-- 已知问题 I-2：Windows 上 node-pty 会话被 kill 之后，ConPTY 可能仍短暂持有启动目录；相关套件把清理做成「尽力而为」——**清理失败不冒充验证失败**。
+- 已知问题 I-1（已定位到根因，维持噪音级登记）：`AttachConsole failed` 堆栈来自 node-pty 在 kill ConPTY 会话时**派生的 `conpty_console_list_agent` 子进程**——该子进程对 `AttachConsole(shellPid)` 的失败单独打印堆栈，属 node-pty 内部行为，应用层无法消除（自行替换 kill 实现只会换来更差的事务性）。实测 Node 与打包产物中均会出现，但 GUI 分发态无 stderr 出口、用户不可见；不影响会话关闭与进程树清理（探针实测 dispose 后 shell 与 conhost 全部退出、启动目录可删）。
+- 已知问题 I-2（已修复）：Windows 上 node-pty 会话被 kill 之后，ConPTY 可能仍短暂持有启动目录。根因是验证脚本用 `Atomics.wait` 做退避——它**阻塞主线程**，libuv 无法处理 conhost 退出通知，持有期在阻塞窗口内永远不会释放（套件打印「残留」后进程一退出目录立即可删，正是这个原因）；改用 `await setTimeout` 让事件循环转动后，300/600/1200/2400 ms 退避重试可在窗口内完成清理。清理语义不变：**尽力而为，清理失败不冒充验证失败**。
 
 ### 静态检查与格式化
 
@@ -392,7 +396,9 @@ npm run build:icon  # 生成应用图标 build/icon.ico（打包链已内置此�
 npm run preview     # 预览构建结果
 npm run typecheck   # 主进程与渲染进程类型检查
 
-npm run verify:all            # 静态检查 + 类型检查 + 构建 + 全部验证套件 + 端到端
+npm run check:file-size   # 文件体积守卫：src/ 单文件超过 800 行即失败（可 --limit 调整）
+
+npm run verify:all            # 静态检查 + 体积守卫 + 类型检查 + 构建 + 全部验证套件 + 端到端
 npm run verify:m3             # M3 四套（重命名、文件操作、生命周期、启动位置）
 npm run verify:m3-file-ops    # 文件操作与批量失败报告
 npm run verify:m3-startup     # 应用级偏好与「恢复上次项目」
