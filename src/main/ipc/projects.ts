@@ -4,6 +4,8 @@ import type {
   ProjectRemoveResult,
   ProjectRevealResult,
   ProjectSummary,
+  ProjectTrustRequest,
+  ProjectTrustResult,
   ProjectUpdateRequest,
   RegisterProjectResult,
   ViewStateRequest,
@@ -17,7 +19,7 @@ import { detectReadme } from '../modules/markdown-preview'
 import { toSummary } from '../modules/project-registry'
 import { isSameLocation } from '../security/path-guard'
 import type { IpcContext } from './context'
-import { confirmUseRepoRoot, pickDirectory, pickRelocateDirectory } from './dialogs'
+import { confirmGrantTrust, confirmUseRepoRoot, pickDirectory, pickRelocateDirectory } from './dialogs'
 
 /** 项目登记、元数据与视图状态。 */
 export function registerProjectIpc(ctx: IpcContext): void {
@@ -72,7 +74,6 @@ export function registerProjectIpc(ctx: IpcContext): void {
   ctx.handle(IpcChannel.projectUpdate, (_event, request: ProjectUpdateRequest): ProjectSummary | null => {
     const patch: Parameters<ReturnType<IpcContext['registry']>['update']>[1] = {}
     if (request.pinned !== undefined) patch.pinned = request.pinned
-    if (request.trusted !== undefined) patch.trusted = request.trusted
     if (request.displayName !== undefined) patch.displayName = request.displayName
     if (request.readmePath !== undefined) patch.readmePath = request.readmePath
     if (request.descriptionOverride !== undefined) patch.descriptionOverride = request.descriptionOverride
@@ -83,6 +84,47 @@ export function registerProjectIpc(ctx: IpcContext): void {
     ctx.invalidateDescription(request.projectId)
     return toSummary(updated, (item) => ctx.describe(item))
   })
+
+  /**
+   * 信任授予／撤销：独立特权通道。
+   *
+   * 授予信任（trusted=true）必须经主进程弹原生确认框，由用户当面确认。
+   * 渲染层被 XSS 攻破时，若能直接经 project:update 自授信，就能先获得写权限
+   * 再调用文件删除／终端创建——因此信任不再走普通元数据更新通道。
+   *
+   * 撤销信任（trusted=false）不需要确认：撤销只会收紧权限。
+   */
+  ctx.handle(
+    IpcChannel.projectTrust,
+    async (event, request: ProjectTrustRequest): Promise<ProjectTrustResult> => {
+      const resolved = ctx.registry().resolveRoot(request.projectId)
+      if (!resolved.ok) {
+        return { trusted: false, cancelled: false, project: null }
+      }
+
+      // 授予信任需原生确认；撤销直接生效
+      if (request.trusted === true) {
+        const confirmed = await confirmGrantTrust(event, resolved.project.displayName, resolved.root)
+        if (!confirmed) {
+          const current = ctx.registry().get(request.projectId)
+          return {
+            trusted: current?.trusted === true,
+            cancelled: true,
+            project: current === null ? null : toSummary(current, (item) => ctx.describe(item))
+          }
+        }
+      }
+
+      const updated = ctx.registry().update(request.projectId, { trusted: request.trusted === true })
+      if (updated === null) return { trusted: false, cancelled: false, project: null }
+      ctx.invalidateDescription(request.projectId)
+      return {
+        trusted: updated.trusted,
+        cancelled: false,
+        project: toSummary(updated, (item) => ctx.describe(item))
+      }
+    }
+  )
 
   ctx.handle(IpcChannel.projectOpen, (_event, request: ProjectRef): ProjectSummary | null => {
     const touched = ctx.registry().touch(request.projectId)

@@ -12,7 +12,7 @@
  *   node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m3-lifecycle.mts
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRegistry, createRegistryStore } from '../src/main/modules/project-registry.ts'
@@ -197,6 +197,107 @@ function main(): void {
     const again = registry.register(originalDir)
     check('旧目录可被重新登记为独立项目', again.status === 'added', `status=${again.status}`)
     check('两条记录指向不同目录', registry.list().length === 3, `记录数=${registry.list().length}`)
+  }
+
+  // 7. 信任绑定目录物理身份：同名目录替换后不得继承旧信任
+  {
+    const swapDir = join(root, 'swap-project')
+    const replacementDir = join(root, 'swap-replacement')
+    mkdirSync(swapDir, { recursive: true })
+    mkdirSync(replacementDir, { recursive: true })
+    writeFileSync(join(swapDir, 'README.md'), '# 被确认的目录\n')
+    writeFileSync(join(replacementDir, 'README.md'), '# 替换后的目录\n')
+
+    const swap = registry.register(swapDir)
+    const swapId = swap.project?.id ?? ''
+    registry.update(swapId, { trusted: true })
+    const identityBefore = registry.get(swapId)?.rootIdentity ?? null
+    check(
+      '信任授予同时记录目录物理身份',
+      registry.get(swapId)?.trusted === true && identityBefore !== null,
+      `trusted=${String(registry.get(swapId)?.trusted)} identity=${String(identityBefore)}`
+    )
+
+    // 两个目录曾同时存在，互换后物理身份必然不同；用改名代替删除重建，
+    // 避免文件系统复用索引导致测试偶发失效
+    renameSync(swapDir, join(root, 'swap-original-aside'))
+    renameSync(replacementDir, swapDir)
+
+    const resolved = registry.resolveRoot(swapId)
+    check(
+      '同名目录替换后信任自动降级为只读',
+      resolved.ok && resolved.project.trusted === false && registry.get(swapId)?.trusted === false,
+      `ok=${String(resolved.ok)} trusted=${String(resolved.ok ? resolved.project.trusted : 'n/a')}`
+    )
+    check(
+      '替换后的目录仍可解析（只读浏览不受影响）',
+      resolved.ok && resolved.root === swap.project?.normalizedIdentity,
+      String(resolved.ok ? resolved.root : '解析失败')
+    )
+    check(
+      '降级结果已持久化',
+      createRegistry(createRegistryStore(storePath)).get(swapId)?.trusted === false,
+      '重新读取仍为未信任'
+    )
+
+    // 用户重新确认后绑定当前目录，而不是沿用旧身份
+    registry.update(swapId, { trusted: true })
+    const rebound = registry.get(swapId)
+    check(
+      '重新授予信任会绑定当前目录身份',
+      rebound?.trusted === true && rebound?.rootIdentity !== null && rebound?.rootIdentity !== identityBefore,
+      `trusted=${String(rebound?.trusted)} identity=${String(rebound?.rootIdentity)}`
+    )
+    const resolvedAgain = registry.resolveRoot(swapId)
+    check(
+      '重新授予后解析根目录保持信任',
+      resolvedAgain.ok && resolvedAgain.project.trusted === true,
+      `trusted=${String(resolvedAgain.ok ? resolvedAgain.project.trusted : 'n/a')}`
+    )
+  }
+
+  // 8. 旧版本记录没有身份绑定：不把「路径相同」当作「目录相同」
+  {
+    const legacyPath = join(appDataDir, 'legacy-trust.json')
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        version: 1,
+        data: {
+          projects: [
+            {
+              id: 'legacy-trusted',
+              displayName: '旧记录',
+              originalPath: originalDir,
+              normalizedIdentity: originalDir,
+              pinned: false,
+              lastOpenedAt: '2026-09-01T00:00:00.000Z',
+              trusted: true,
+              isGitRepository: null
+            }
+          ],
+          viewStates: []
+        }
+      }),
+      'utf8'
+    )
+    const legacyRegistry = createRegistry(createRegistryStore(legacyPath))
+    const legacy = legacyRegistry.list()[0]
+    check(
+      '旧记录缺少身份绑定时不继承信任',
+      legacy?.trusted === false && legacy?.rootIdentity !== null,
+      `trusted=${String(legacy?.trusted)} identity=${String(legacy?.rootIdentity)}`
+    )
+    check(
+      '旧记录降级后立即持久化',
+      createRegistry(createRegistryStore(legacyPath)).get('legacy-trusted')?.trusted === false,
+      '重新读取仍为未信任'
+    )
+    check(
+      '旧记录降级后目录仍可解析',
+      legacyRegistry.resolveRoot('legacy-trusted').ok,
+      '只读浏览不受影响'
+    )
   }
 
   /* ---------- M3-4 退出前活动会话提示 ---------- */

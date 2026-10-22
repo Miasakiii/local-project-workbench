@@ -42,6 +42,7 @@ export const IpcChannel = {
   projectRegister: 'project:register',
   projectRemove: 'project:remove',
   projectUpdate: 'project:update',
+  projectTrust: 'project:trust',
   projectOpen: 'project:open',
   projectReveal: 'project:reveal',
   projectRelocate: 'project:relocate',
@@ -100,7 +101,6 @@ export interface ProjectRef {
 export interface ProjectUpdateRequest {
   projectId: string
   pinned?: boolean
-  trusted?: boolean
   displayName?: string
   /** 用户指定的介绍文件相对路径；null 表示恢复自动识别 */
   readmePath?: string | null
@@ -108,6 +108,26 @@ export interface ProjectUpdateRequest {
   descriptionOverride?: string | null
   /** 「允许本项目加载网络图片」开关（设计稿 4.3） */
   allowNetworkImages?: boolean
+}
+
+/**
+ * 信任授予／撤销请求。
+ *
+ * 信任是独立特权通道，不与普通元数据更新混用：授予信任等于把写权限与终端权限
+ * 交给该项目目录，必须经主进程原生确认框由用户当面确认，不接受渲染层直接置位。
+ */
+export interface ProjectTrustRequest {
+  projectId: string
+  /** true=授予信任；false=撤销信任（撤销不需要原生确认） */
+  trusted: boolean
+}
+
+export interface ProjectTrustResult {
+  /** 操作后的信任状态；用户取消原生确认时返回当前状态（未改变） */
+  trusted: boolean
+  /** 用户是否取消了原生确认框 */
+  cancelled: boolean
+  project: ProjectSummary | null
 }
 
 export interface ProjectRemoveResult {

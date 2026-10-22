@@ -65,6 +65,8 @@ function sanitizeProject(raw: unknown): Project | null {
     pinned: toBoolean(raw['pinned'], false),
     lastOpenedAt: typeof raw['lastOpenedAt'] === 'string' ? raw['lastOpenedAt'] : new Date(0).toISOString(),
     trusted: toBoolean(raw['trusted'], false),
+    // 旧版本没有身份绑定字段：保留 null，信任会在首次解析时要求重新确认
+    rootIdentity: toStringOrNull(raw['rootIdentity']),
     // 旧版本 projects.json 无此字段时按默认关闭恢复（设计稿 4.3）
     allowNetworkImages: toBoolean(raw['allowNetworkImages'], false),
     isGitRepository
@@ -155,6 +157,26 @@ export function computeIdentity(directory: string): { ok: true; identity: string
   }
 }
 
+/**
+ * 根目录的物理身份（卷 + 文件索引）。
+ *
+ * 与 `computeIdentity` 的路径身份互补：路径身份用于去重，物理身份用于绑定信任。
+ * 目录被删除后同名重建、或可移动磁盘换了盘符时，真实路径不变而物理身份改变；
+ * 若只看路径，旧信任就会被自动继承给一个从未被确认过的目录。
+ *
+ * 使用 BigInt 读取，避免 64 位文件索引在 JSON 化时丢精度。文件系统不提供
+ * 稳定索引（ino 为 0）或目录当前不可读取时返回 null——不冒充已绑定。
+ */
+function captureRootIdentity(root: string): string | null {
+  try {
+    const stats = statSync(root, { bigint: true })
+    if (!stats.isDirectory() || stats.ino === 0n) return null
+    return `${stats.dev}:${stats.ino}`
+  } catch {
+    return null
+  }
+}
+
 export class ProjectRegistry {
   constructor(private readonly store: JsonStore<RegistryData>) {}
 
@@ -167,7 +189,9 @@ export class ProjectRegistry {
   }
 
   list(): Project[] {
-    return [...this.data().projects]
+    // 每次列举时核对信任绑定：目录被替换或旧记录缺少绑定信息时立即降级，
+    // 让界面在用户发起写操作之前就显示为只读。
+    return this.data().projects.map((project) => this.settleTrust(project, false))
   }
 
   get(projectId: string): Project | null {
@@ -188,7 +212,43 @@ export class ProjectRegistry {
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error) }
     }
-    return { ok: true, root: project.normalizedIdentity, project }
+    // 写操作与终端都以这里返回的 trusted 为准：身份对不上就不能继续使用旧信任。
+    // 此路径已确认目录存在，取不到物理身份时按不可验证处理（而不是放行）。
+    const effective = this.settleTrust(project, true)
+    return { ok: true, root: effective.normalizedIdentity, project: effective }
+  }
+
+  /**
+   * 核对信任与目录物理身份是否仍然对应。
+   *
+   * `unverifiableIsMismatch` 区分两种调用场景：
+   * - 列举时（false）目录可能只是暂时不可读，无法判定就保持原状；
+   * - 解析根目录时（true）目录已确认存在，取不到身份只能视为不可验证，必须降级。
+   *
+   * 绑定缺失（旧版本记录）同样降级：无法证明当前目录就是当初确认的那个。
+   */
+  private settleTrust(project: Project, unverifiableIsMismatch: boolean): Project {
+    if (!project.trusted) return project
+    const currentIdentity = captureRootIdentity(project.normalizedIdentity)
+    if (currentIdentity === null) {
+      return unverifiableIsMismatch ? (this.downgradeTrust(project.id, null) ?? project) : project
+    }
+    if (project.rootIdentity !== null && currentIdentity === project.rootIdentity) return project
+    return this.downgradeTrust(project.id, currentIdentity) ?? project
+  }
+
+  /** 撤销信任并记录当前物理身份；目录本身仍可只读浏览。 */
+  private downgradeTrust(projectId: string, rootIdentity: string | null): Project | null {
+    const data = this.data()
+    let updated: Project | null = null
+    const projects = data.projects.map((project) => {
+      if (project.id !== projectId) return project
+      updated = { ...project, trusted: false, rootIdentity }
+      return updated
+    })
+    if (updated === null) return null
+    this.persist({ ...data, projects })
+    return updated
   }
 
   register(directory: string): RegisterOutcome {
@@ -212,6 +272,7 @@ export class ProjectRegistry {
       pinned: false,
       lastOpenedAt: new Date().toISOString(),
       trusted: false,
+      rootIdentity: captureRootIdentity(identityResult.identity),
       // 新登记项目一律默认关闭网络图片（设计稿 4.3：默认不加载）
       allowNetworkImages: false,
       isGitRepository: null
@@ -275,8 +336,10 @@ export class ProjectRegistry {
       ...current,
       originalPath: resolve(directory),
       normalizedIdentity: identityResult.identity,
-      // 身份变化即撤销信任：新目录必须重新确认后才允许写操作与终端
-      trusted: false
+      // 身份变化即撤销信任：新目录必须重新确认后才允许写操作与终端。
+      // 物理身份也一并更新，供下一次授予信任时对照。
+      trusted: false,
+      rootIdentity: captureRootIdentity(identityResult.identity)
     }
 
     const data = this.data()
@@ -328,7 +391,17 @@ export class ProjectRegistry {
       if (project.id !== projectId) return project
       const next: Project = { ...project }
       if (patch.pinned !== undefined) next.pinned = patch.pinned
-      if (patch.trusted !== undefined) next.trusted = patch.trusted
+      if (patch.trusted !== undefined) {
+        if (patch.trusted) {
+          // 信任授予必须绑定授予时的目录物理身份；取不到就不授予，
+          // 不能让「路径相同」代替「目录相同」。
+          const identity = captureRootIdentity(next.normalizedIdentity)
+          next.trusted = identity !== null
+          if (identity !== null) next.rootIdentity = identity
+        } else {
+          next.trusted = false
+        }
+      }
       if (patch.displayName !== undefined && patch.displayName.trim().length > 0) {
         next.displayName = patch.displayName.trim()
       }

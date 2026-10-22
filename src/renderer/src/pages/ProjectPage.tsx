@@ -299,18 +299,18 @@ export function ProjectPage({
   }, [])
 
   const confirmTrust = useCallback(async () => {
-    const updated = await window.workbench.project.update({ projectId: project.id, trusted: true })
+    const result = await window.workbench.project.trust({ projectId: project.id, trusted: true })
     setTrustPrompt(false)
-    if (updated !== null) onProjectChange(updated)
-    addTab('')
+    if (result.project !== null) onProjectChange(result.project)
+    if (!result.cancelled) addTab('')
   }, [addTab, onProjectChange, project.id])
 
   const toggleTrust = useCallback(async () => {
-    const updated = await window.workbench.project.update({
+    const result = await window.workbench.project.trust({
       projectId: project.id,
       trusted: !project.trusted
     })
-    if (updated !== null) onProjectChange(updated)
+    if (result.project !== null) onProjectChange(result.project)
   }, [onProjectChange, project.id, project.trusted])
 
   /** 在指定目录新建标签。多标签已支持，不再需要替换现有会话。 */

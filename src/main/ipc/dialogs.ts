@@ -87,3 +87,36 @@ export async function confirmUseRepoRoot(
   if (index === 2) return 'cancelled'
   return 'chosen'
 }
+
+/**
+ * 信任授予的原生确认框。
+ *
+ * 信任授予是独立特权操作：渲染层被 XSS 攻破时，若能直接经 IPC 自授信，
+ * 就能先获得写权限再调用文件删除／终端创建。因此「授予信任」必须经主进程
+ * 弹一次原生确认框，由用户当面确认——原生框不受渲染层控制，无法被脚本伪造。
+ *
+ * 撤销信任（trusted=false）不需要确认：撤销只会收紧权限，不扩大攻击面。
+ */
+export async function confirmGrantTrust(
+  event: IpcMainInvokeEvent,
+  projectName: string,
+  projectPath: string
+): Promise<boolean> {
+  const options: MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['取消', '信任该项目'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '信任项目',
+    message: `确定要信任「${projectName}」吗？`,
+    detail:
+      `信任后该项目将获得以下权限：\n` +
+      `· 在项目目录内执行文件写操作（新建、重命名、复制、删除）\n` +
+      `· 创建终端会话（终端具备当前用户的系统权限）\n\n` +
+      `项目目录：${projectPath}\n\n` +
+      `信任只对该目录有效；重新定位到其它目录后需要重新确认。`
+  }
+  const owner = BrowserWindow.fromWebContents(event.sender)
+  const result = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options)
+  return result.response === 1
+}

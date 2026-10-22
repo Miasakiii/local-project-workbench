@@ -22,6 +22,8 @@ import type {
   ProjectRemoveResult,
   ProjectRevealResult,
   ProjectSummary,
+  ProjectTrustRequest,
+  ProjectTrustResult,
   ProjectUpdateRequest,
   QuitConfirmRequest,
   QuitRequestedEvent,
@@ -103,6 +105,13 @@ const api = {
 
     update: (request: ProjectUpdateRequest): Promise<ProjectSummary | null> =>
       ipcRenderer.invoke(IpcChannel.projectUpdate, request),
+
+    /**
+     * 信任授予／撤销：独立特权通道。
+     * 授予信任时主进程会弹原生确认框，由用户当面确认。
+     */
+    trust: (request: ProjectTrustRequest): Promise<ProjectTrustResult> =>
+      ipcRenderer.invoke(IpcChannel.projectTrust, request),
 
     /** 记录最近打开时间 */
     open: (request: ProjectRef): Promise<ProjectSummary | null> => ipcRenderer.invoke(IpcChannel.projectOpen, request),
