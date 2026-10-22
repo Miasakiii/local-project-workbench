@@ -58,6 +58,11 @@ export function FileTree({
   onToggleDirectory,
   onLabelClick
 }: FileTreeProps): React.JSX.Element {
+  // 焦点光标不在当前行内时（切换项目后树已刷新、光标路径已陈旧），
+  // 漫游 tabindex 必须回退到首个可见行，否则没有任何一行可被 Tab 进入。
+  // 光标尚未进入树（cursorPath 为 null）时同理：入口行即首个可见行。
+  const cursorNotInRows =
+    cursorPath !== null && !rows.some((row) => row.kind === 'entry' && row.entry.relativePath === cursorPath)
   return (
     <div
       className="file-tree"
@@ -91,6 +96,14 @@ export function FileTree({
         const entry = row.entry
         const isExpanded = expanded.has(entry.relativePath)
         const isSelected = selectedPaths.has(entry.relativePath)
+        // 漫游 tabindex 的入口行：焦点光标可见时取光标，否则回退到首个可见行。
+        // 不能直接用 `cursorPath ?? firstFocusablePath`——cursorPath 是不在
+        // 当前行内的陈旧路径时（如切换项目后树已刷新），`??` 不会回退，
+        // 结果是没有任何一行可被 Tab 进入。光标尚未进入树（null）时同样
+        // 要回退到首个可见行，否则初始态下没有任何一行可被 Tab 进入。
+        const isTabbable =
+          cursorPath === entry.relativePath ||
+          ((cursorPath === null || cursorNotInRows) && firstFocusablePath === entry.relativePath)
 
         return (
           <div
@@ -102,7 +115,7 @@ export function FileTree({
             aria-level={row.depth + 1}
             aria-selected={isSelected}
             aria-expanded={entry.kind === 'directory' ? isExpanded : undefined}
-            tabIndex={(cursorPath ?? firstFocusablePath) === entry.relativePath ? 0 : -1}
+            tabIndex={isTabbable ? 0 : -1}
             title={tooltipFor(entry)}
             onFocus={() => onRowFocus(entry.relativePath)}
             // 右键条目：先按需选中，再按光标位置开该条目的菜单

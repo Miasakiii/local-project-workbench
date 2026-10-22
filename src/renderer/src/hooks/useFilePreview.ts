@@ -28,6 +28,8 @@ export function useFilePreview({ projectId }: { projectId: string }): {
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [loadingPreview, setLoadingPreview] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  /** 预览请求代次：只有最新一次请求的结果可以落到界面上 */
+  const previewRequestRef = useRef(0)
   /** 预览容器：用于在重载前后保持滚动位置 */
   const previewHostRef = useRef<HTMLDivElement>(null)
   const previewScrollRef = useRef(0)
@@ -35,25 +37,39 @@ export function useFilePreview({ projectId }: { projectId: string }): {
   const openPreview = useCallback(
     (entry: FileEntry, preserveScroll = false) => {
       if (!preserveScroll) previewScrollRef.current = 0
+      previewRequestRef.current += 1
+      const requestId = previewRequestRef.current
       setLoadingPreview(true)
       setPreviewError(null)
       void window.workbench.file
         .preview({ projectId, relativePath: entry.relativePath })
-        .then(setPreview)
+        .then((next) => {
+          // 快速切换文件时，晚到的旧响应不能覆盖当前预览
+          if (previewRequestRef.current !== requestId) return
+          setPreview(next)
+        })
         .catch((error: unknown) => {
+          if (previewRequestRef.current !== requestId) return
           setPreview(null)
           setPreviewError(error instanceof Error ? error.message : String(error))
         })
-        .finally(() => setLoadingPreview(false))
+        .finally(() => {
+          if (previewRequestRef.current === requestId) setLoadingPreview(false)
+        })
     },
     [projectId]
   )
 
   const clearPreview = useCallback(() => {
+    // 作废在途请求，避免清空后旧响应又把预览填回来
+    previewRequestRef.current += 1
+    setLoadingPreview(false)
     setPreview(null)
   }, [])
 
   const dismissPreview = useCallback(() => {
+    previewRequestRef.current += 1
+    setLoadingPreview(false)
     previewScrollRef.current = 0
     setPreview(null)
   }, [])
