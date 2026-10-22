@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from 'node:fs'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 /**
  * 路径安全解析层 —— 「项目 ID + 相对路径」的唯一校验入口。
@@ -159,13 +159,15 @@ function safeRealpath(target: string): { ok: true; path: string } | { ok: false;
 /**
  * 归属检查：目标真实路径必须位于项目根真实路径之内。
  *
- * 用 `path.relative` 判断包含关系：若结果以 `..` 开头或为绝对路径，说明越界。
- * 该方法在 win32 下按大小写不敏感比较根，符合 Windows 语义。
+ * 用 `path.relative` 判断包含关系：若结果为 `..`、以 `..` + 分隔符开头、或为
+ * 绝对路径，说明越界。不能只用 `startsWith('..')`——项目根下名为 `..foo` 的
+ * 合法文件会被误判为「项目外」。该方法在 win32 下按大小写不敏感比较根，
+ * 符合 Windows 语义。
  */
 export function isInside(realRoot: string, realTarget: string): boolean {
   const rel = relative(realRoot, realTarget)
   if (rel === '') return true
-  if (rel.startsWith('..')) return false
+  if (rel === '..' || rel.startsWith(`..${sep}`)) return false
   return !isAbsolute(rel)
 }
 

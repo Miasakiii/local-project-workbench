@@ -1,3 +1,4 @@
+import { lstatSync } from 'node:fs'
 import type { FileOperationReason, FileOperationStatus } from '@shared/types'
 import {
   isProtectedEntry,
@@ -156,4 +157,68 @@ export function writtenTargetIntact(
     isSameLocation(targetAfter.absolutePath, absolutePathBefore) &&
     !unstable?.()
   )
+}
+
+/**
+ * 文件身份快照 —— TOCTOU（R9）收窄的第二道锁，A1 落点。
+ *
+ * **为什么 realpath 等价复核不够：** `realpath` 相等只证明「同一个路径字符串解析到
+ * 同一位置」，证明不了「同一个物理文件」。攻击者删掉目标再建一个同名文件即可让
+ * realpath 复核照常通过，而此时盘上已是另一个文件。`dev + ino` 是文件系统层面的
+ * 物理身份：同一文件在重写下保持不变，删除重建必然改变。
+ *
+ * **实测依据（2026-10-12，win32）：** Node 22.22.2（验证运行时）与 Electron 44 内置
+ * Node 24.21.0 均经 libuv → `GetFileInformationByHandle` 暴露 64 位文件索引；
+ * 重复 stat 间稳定、重写下不变、删除重建后改变。在不提供稳定文件 ID 的文件系统
+ * （部分 exFAT／FAT32）上，`size + mtimeMs` 复合指纹仍能检测「内容或时间被换」，
+ * 但同尺寸同修改时间的伪造超出复合指纹能力——如实登记，不冒充已消除。
+ */
+export interface FileIdentity {
+  /** 卷序列号 */
+  dev: number
+  /** 文件索引号（NTFS 文件记录号；不可用时退化为复合指纹） */
+  ino: number
+  size: number
+  mtimeMs: number
+  /** 是否常规文件；目录不参与复合指纹（目录 mtime 随内容变化） */
+  isFile: boolean
+}
+
+/** 采集路径当前身份；不存在或不可 stat 时返回 null（即「当时不存在」）。 */
+export function captureFileIdentity(absolutePath: string): FileIdentity | null {
+  try {
+    const stats = lstatSync(absolutePath)
+    return {
+      dev: stats.dev,
+      ino: stats.ino,
+      size: stats.size,
+      mtimeMs: stats.mtimeMs,
+      isFile: stats.isFile()
+    }
+  } catch {
+    return null
+  }
+}
+
+/** 两个身份快照是否指向同一物理文件；两侧 null（都不存在）视为一致。 */
+export function sameFileIdentity(a: FileIdentity | null, b: FileIdentity | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.dev === b.dev && a.ino === b.ino
+}
+
+/** 路径当前身份是否与快照一致（含「都不存在」）。 */
+export function fileIdentityUnchanged(snapshot: FileIdentity | null, absolutePath: string): boolean {
+  return sameFileIdentity(snapshot, captureFileIdentity(absolutePath))
+}
+
+/**
+ * 复合指纹是否未变（常规文件的 size + mtimeMs）。
+ * 目录恒判真——目录 mtime 随自身内容变化，不构成「未被替换」的信号。
+ */
+export function fileFingerprintUnchanged(snapshot: FileIdentity | null, absolutePath: string): boolean {
+  if (snapshot === null) return captureFileIdentity(absolutePath) === null
+  if (!snapshot.isFile) return true
+  const now = captureFileIdentity(absolutePath)
+  if (now === null) return false
+  return now.size === snapshot.size && now.mtimeMs === snapshot.mtimeMs
 }
