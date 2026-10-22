@@ -21,7 +21,7 @@
 const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
-const { execFileSync } = require('node:child_process')
+const { execFile } = require('node:child_process')
 
 const ROOT = path.join(__dirname, '..')
 const ELECTRON_BIN = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
@@ -115,6 +115,25 @@ function assertArtifactsFresh() {
   }
 }
 
+/**
+ * 生产构建的 CSP 必须已收紧。
+ *
+ * 开发态需要 ws:/wss: 与内联样式，生产态不需要；若构建期判断写错（例如把
+ * `ctx.server === undefined` 误判为开发态），分发产物会静默保留放宽后的策略。
+ * 这里直接检查构建产物，避免这种回退只在人工审查时才发现。
+ */
+function assertProductionCsp() {
+  const htmlPath = path.join(ROOT, 'out', 'renderer', 'index.html')
+  const html = fs.readFileSync(htmlPath, 'utf8')
+  const violations = []
+  if (/connect-src[^;"]*\bwss?:/.test(html)) violations.push('connect-src 仍允许 ws/wss')
+  if (/style-src[^;"]*'unsafe-inline'/.test(html)) violations.push("style-src 仍允许 'unsafe-inline'")
+  if (violations.length > 0) {
+    process.stderr.write(`生产构建 CSP 未收紧：${violations.join('；')}\n  文件：${htmlPath}\n`)
+    process.exit(2)
+  }
+}
+
 /* ==================== 子进程：真实 Electron 内执行 ==================== */
 
 function runChild() {
@@ -160,7 +179,7 @@ function runChild() {
   /** 重新定位的目标目录：模拟「第二项目」被移动后的新位置 */
   const relocatedDir = path.join(fixtureRoot, 'second-project-moved')
 
-  function buildFixture() {
+  async function buildFixture() {
     removeTree(fixtureRoot)
     // 上一轮若中途失败，会把「恢复上次项目」留在开启状态，下一次启动就会直接进项目页，
     // 让「首次启动停留项目库」这类断言测到污染的起点。只在 main 阶段重置——
@@ -193,20 +212,27 @@ function runChild() {
     fs.writeFileSync(path.join(secondDir, 'README.md'), '# 第二项目\n\n用于验证项目切换与会话保持。\n')
     fs.writeFileSync(path.join(secondDir, 'plain.txt'), 'second\n')
 
-    // 冒烟项目做成真实 Git 仓库，并留下四类变更供变更页与差异视图验证
-    const run = (args) => execFileSync('git', args, { cwd: projectDir, encoding: 'utf8', windowsHide: true })
-    run(['init', '--quiet'])
-    run(['config', 'user.email', 'smoke@example.com'])
-    run(['config', 'user.name', 'smoke'])
-    run(['config', 'core.autocrlf', 'false'])
+    // 冒烟项目做成真实 Git 仓库，并留下四类变更供变更页与差异视图验证。
+    // 异步 execFile 而非同步 execFileSync：本类环境对同步派生 git 返回 EBUSY。
+    const runGit = (args) =>
+      new Promise((resolve, reject) => {
+        execFile('git', args, { cwd: projectDir, encoding: 'utf8', windowsHide: true }, (error, stdout, stderr) => {
+          if (error) reject(Object.assign(error, { stderr }))
+          else resolve(stdout)
+        })
+      })
+    await runGit(['init', '--quiet'])
+    await runGit(['config', 'user.email', 'smoke@example.com'])
+    await runGit(['config', 'user.name', 'smoke'])
+    await runGit(['config', 'core.autocrlf', 'false'])
     fs.writeFileSync(path.join(projectDir, 'tracked.txt'), ['第一行', '第二行', '第三行', ''].join('\n'))
-    run(['add', 'tracked.txt', 'README.md'])
-    run(['commit', '--quiet', '-m', '初始提交'])
+    await runGit(['add', 'tracked.txt', 'README.md'])
+    await runGit(['commit', '--quiet', '-m', '初始提交'])
     // 未暂存：改两行
     fs.writeFileSync(path.join(projectDir, 'tracked.txt'), ['第一行已改', '第二行', '新增行', ''].join('\n'))
     // 已暂存：新增并暂存一个文件
     fs.writeFileSync(path.join(projectDir, 'staged.txt'), '暂存内容\n')
-    run(['add', 'staged.txt'])
+    await runGit(['add', 'staged.txt'])
   }
 
   /** 预置登记数据：主进程按需惰性读取该文件 */
@@ -410,7 +436,7 @@ function runChild() {
   }
 
   async function main() {
-    buildFixture()
+    await buildFixture()
     seedRegistry()
 
     // 载入真实主进程（注册 IPC 与创建窗口）
@@ -435,8 +461,18 @@ function runChild() {
     // 等待预加载层注入
     await new Promise((resolve) => setTimeout(resolve, 600))
 
+    // 信任授予是独立特权通道，主进程会弹原生确认框。验证环境无人值守，
+    // 用替身自动确认「信任项目」对话框（标题精确匹配，不影响其它对话框）。
+    // 与 relocate 段的 showOpenDialog 替身同一思路。
+    const originalShowMessageBox = electronModule.dialog.showMessageBox
+    electronModule.dialog.showMessageBox = async (owner, options) => {
+      if (options?.title === '信任项目') return { response: 1 }
+      return originalShowMessageBox(owner, options)
+    }
+
     if (phase !== 'main') {
       await runStartupPhase(window)
+      electronModule.dialog.showMessageBox = originalShowMessageBox
       report()
       return
     }
@@ -679,9 +715,10 @@ function runChild() {
     )
 
     // 授信后再建：证明主路径没被这道门堵死（下面 UI 流程开始前再撤回信任，
-    // 让「未信任项目创建终端前先确认信任」仍旧覆盖原本的分支）
+    // 让「未信任项目创建终端前先确认信任」仍旧覆盖原本的分支）。
+    // 信任授予现为独立通道，主进程会弹原生确认框——已在窗口加载后统一替身接管。
     await window.webContents.executeJavaScript(
-      `window.workbench.project.update({ projectId: ${JSON.stringify(projectId)}, trusted: true })`
+      `window.workbench.project.trust({ projectId: ${JSON.stringify(projectId)}, trusted: true })`
     )
     const terminal = await window.webContents.executeJavaScript(
       `window.workbench.terminal.create({ projectId: ${JSON.stringify(projectId)}, relativePath: '', cols: 80, rows: 24 })`
@@ -698,7 +735,7 @@ function runChild() {
       record('终端会话可关闭', true, '已 dispose')
     }
     await window.webContents.executeJavaScript(
-      `window.workbench.project.update({ projectId: ${JSON.stringify(projectId)}, trusted: false })`
+      `window.workbench.project.trust({ projectId: ${JSON.stringify(projectId)}, trusted: false })`
     )
     const trustRestored = await window.webContents.executeJavaScript(
       `window.workbench.project.list().then((list) => list.find((item) => item.id === ${JSON.stringify(projectId)})?.trusted)`
@@ -1574,30 +1611,42 @@ function runChild() {
     )
 
     // 键盘可达性（P0-3）：roving tabindex —— 恰一个 treeitem 可被 Tab 进入；
-    // 聚焦首行后按 ↓ 把焦点与选中移到下一行。分步等待 React 提交后再断言。
+    // 聚焦首行后按 ↓ 把焦点与选中移到下一行。
+    //
+    // 确定性说明：方向键处理读的是「焦点光标」state，而 focus() 只是请求
+    // React 提交该 state——固定 sleep 赌的是提交在睡眠窗口内落盘。负载下
+    // 提交可能晚于 sleep，此时按 ↓ 会把光标停在首行（currentIndex 为 -1 →
+    // focusRow(0)），表现为「焦点不动」的偶发失败（2026-10-22 verify:all
+    // 实测复现一次，复跑即过）。这里每个回合都重新聚焦首行再按 ↓ 并检查，
+    // 提交落盘后的回合必然移动到第二行；断言的是「方向键可移动焦点与选中」
+    // 这一行为本身，不是首按必中。回合上限 8，最坏约 2.4 s。
     const treeTabbable = await evaluate(`(() => {
       const items = [...document.querySelectorAll('[role="treeitem"]')]
       return { total: items.length, tabbable: items.filter((el) => el.getAttribute('tabindex') === '0').length }
     })()`)
-    await evaluate(`(() => { const first = document.querySelector('[role="treeitem"]'); if (first) first.focus() })()`)
-    await sleep(80)
-    await evaluate(`(() => {
-      const active = document.activeElement
-      if (active && active.getAttribute('role') === 'treeitem') {
-        active.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
-      }
-    })()`)
-    await sleep(120)
-    const keyboardTree = await evaluate(`(() => {
-      const items = [...document.querySelectorAll('[role="treeitem"]')]
-      const active = document.activeElement
-      return {
-        total: items.length,
-        activeIndex: items.indexOf(active),
-        selected: active === null ? null : active.getAttribute('aria-selected'),
-        tabbable: items.filter((el) => el.getAttribute('tabindex') === '0').length
-      }
-    })()`)
+    let keyboardTree = null
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await evaluate(`(() => { const first = document.querySelector('[role="treeitem"]'); if (first) first.focus() })()`)
+      await sleep(150)
+      await evaluate(`(() => {
+        const active = document.activeElement
+        if (active && active.getAttribute('role') === 'treeitem') {
+          active.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+        }
+      })()`)
+      await sleep(150)
+      keyboardTree = await evaluate(`(() => {
+        const items = [...document.querySelectorAll('[role="treeitem"]')]
+        const active = document.activeElement
+        return {
+          total: items.length,
+          activeIndex: items.indexOf(active),
+          selected: active === null ? null : active.getAttribute('aria-selected'),
+          tabbable: items.filter((el) => el.getAttribute('tabindex') === '0').length
+        }
+      })()`)
+      if (keyboardTree.activeIndex === 1 && keyboardTree.selected === 'true') break
+    }
     record(
       '方向键可在文件树中移动焦点与选中',
       treeTabbable.total >= 2 &&
@@ -1951,7 +2000,7 @@ function runChild() {
       const list = await window.workbench.project.list()
       const target = list.find((item) => item.displayName === '第二项目')
       if (!target) return null
-      await window.workbench.project.update({ projectId: target.id, trusted: true })
+      await window.workbench.project.trust({ projectId: target.id, trusted: true })
       return target.id
     })()`)
     await evaluate(`(() => {
@@ -2200,41 +2249,76 @@ if (process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE) {
   runChild()
 } else {
   assertArtifactsFresh()
+  assertProductionCsp()
 
-  const { spawnSync } = require('node:child_process')
+  const { spawn } = require('node:child_process')
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
 
-  let passed = 0
-  let total = 0
-  const perPhase = []
-
-  for (const item of PHASES) {
-    const result = spawnSync(ELECTRON_BIN, [__filename], {
-      cwd: ROOT,
-      env: { ...env, WORKBENCH_SMOKE_PHASE: item.name },
-      encoding: 'utf8',
-      timeout: item.timeout,
-      windowsHide: true
+  /**
+   * 跑一个阶段。异步 spawn 而非 spawnSync：本类环境对同步派生 Electron 返回
+   * EBUSY（CreateProcess 被环境层拦截），异步 spawn 正常。输出实时转发并同时
+   * 收集，供父进程解析「合计：N/M 项通过」。
+   */
+  const runPhase = (name, timeoutMs) =>
+    new Promise((resolve) => {
+      const child = spawn(ELECTRON_BIN, [__filename], {
+        cwd: ROOT,
+        env: { ...env, WORKBENCH_SMOKE_PHASE: name },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+      })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.on('data', (chunk) => {
+        const text = String(chunk)
+        stdout += text
+        process.stdout.write(text)
+      })
+      child.stderr.on('data', (chunk) => {
+        const text = String(chunk)
+        stderr += text
+        process.stderr.write(text)
+      })
+      const watchdog = setTimeout(() => {
+        process.stderr.write(`阶段 ${name} 超过 ${timeoutMs}ms，已终止。\n`)
+        child.kill()
+      }, timeoutMs)
+      child.on('error', (error) => {
+        clearTimeout(watchdog)
+        resolve({ stdout, stderr, status: null, spawnError: error })
+      })
+      child.on('exit', (code) => {
+        clearTimeout(watchdog)
+        resolve({ stdout, stderr, status: code, spawnError: null })
+      })
     })
 
-    process.stdout.write(result.stdout || '')
-    if (result.stderr) process.stderr.write(result.stderr)
+  const main = async () => {
+    let passed = 0
+    let total = 0
+    const perPhase = []
 
-    const matched = /合计：(\d+)\/(\d+) 项通过/.exec(result.stdout || '')
-    if (matched === null) {
-      // 子进程没跑到汇总行（异常退出或超时），计数不可信，直接终止
-      console.error(`阶段 ${item.name} 未产出汇总（退出码 ${String(result.status)}），已中止。`)
-      process.exit(1)
+    for (const item of PHASES) {
+      const result = await runPhase(item.name, item.timeout)
+
+      const matched = /合计：(\d+)\/(\d+) 项通过/.exec(result.stdout)
+      if (matched === null || result.spawnError !== null) {
+        // 子进程没跑到汇总行（异常退出、启动失败或超时），计数不可信，直接终止
+        console.error(`阶段 ${item.name} 未产出汇总（退出码 ${String(result.status)}），已中止。`)
+        process.exit(1)
+      }
+
+      passed += Number(matched[1])
+      total += Number(matched[2])
+      perPhase.push(`${item.name} ${matched[1]}/${matched[2]}`)
+
+      if (Number(matched[1]) !== Number(matched[2])) break
     }
 
-    passed += Number(matched[1])
-    total += Number(matched[2])
-    perPhase.push(`${item.name} ${matched[1]}/${matched[2]}`)
-
-    if (Number(matched[1]) !== Number(matched[2])) break
+    console.log(`\n端到端合计：${passed}/${total} 项通过（${perPhase.join(' · ')}）`)
+    process.exit(passed === total && perPhase.length === PHASES.length ? 0 : 1)
   }
 
-  console.log(`\n端到端合计：${passed}/${total} 项通过（${perPhase.join(' · ')}）`)
-  process.exit(passed === total && perPhase.length === PHASES.length ? 0 : 1)
+  main()
 }
