@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
 import { dirname, extname } from 'node:path'
 import type { AssetReadResult, BlockedNotice, MarkdownDocument, ReadmeDetection, ReadmeVariant } from '@shared/types'
 import { type PathRejection, resolveProjectPath } from '../security/path-guard'
@@ -29,6 +29,36 @@ import {
 export const TEXT_PREVIEW_LIMIT_BYTES = 5 * 1024 * 1024
 /** 图片预览阈值（设计稿 4.3，标注为待验证） */
 export const IMAGE_PREVIEW_LIMIT_BYTES = 20 * 1024 * 1024
+
+export interface PrefixRead {
+  buffer: Buffer
+  /** 读取前由 fstat 得到的文件实际大小 */
+  totalBytes: number
+}
+
+/**
+ * 只读取文件前 `limit` 字节。
+ *
+ * 预览只需要前缀，不能因为文件很大就把整个文件读进主进程内存——
+ * 否则一个超大文本文件就能让预览变成 OOM。
+ */
+export function readFilePrefix(absolutePath: string, limit: number): PrefixRead {
+  const handle = openSync(absolutePath, 'r')
+  try {
+    const totalBytes = fstatSync(handle).size
+    const length = Math.min(totalBytes, limit)
+    const buffer = Buffer.alloc(length)
+    let offset = 0
+    while (offset < length) {
+      const read = readSync(handle, buffer, offset, length - offset, offset)
+      if (read === 0) break
+      offset += read
+    }
+    return { buffer: offset === length ? buffer : buffer.subarray(0, offset), totalBytes }
+  } finally {
+    closeSync(handle)
+  }
+}
 /** 单个文档最多解析的图片数量，避免异常文档放大解析成本 */
 const MAX_ASSETS = 200
 
@@ -517,9 +547,8 @@ export function renderMarkdownFile(request: RenderRequest): MarkdownDocument {
   const truncated = size > TEXT_PREVIEW_LIMIT_BYTES
   let source: string
   try {
-    // 大文件只读取阈值内的前缀，并明确告知已截断，而不是静默给出不完整内容
-    const buffer = readFileSync(resolution.absolutePath)
-    source = buffer.subarray(0, TEXT_PREVIEW_LIMIT_BYTES).toString('utf8')
+    // 只读取阈值内的前缀，并明确告知已截断，而不是静默给出不完整内容
+    source = readFilePrefix(resolution.absolutePath, TEXT_PREVIEW_LIMIT_BYTES).buffer.toString('utf8')
   } catch (error) {
     return empty(resolution.normalized, [], `无法读取文件：${error instanceof Error ? error.message : String(error)}`)
   }

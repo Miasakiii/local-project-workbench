@@ -18,7 +18,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { highlightCode } from '../src/main/modules/code-highlight.ts'
 import { listDirectory, previewFile } from '../src/main/modules/file-browser.ts'
-import { detectReadme, renderMarkdownFile } from '../src/main/modules/markdown-preview.ts'
+import {
+  detectReadme,
+  readFilePrefix,
+  renderMarkdownFile,
+  TEXT_PREVIEW_LIMIT_BYTES
+} from '../src/main/modules/markdown-preview.ts'
 import { resolveDescription } from '../src/main/modules/project-description.ts'
 import { createRegistry, createRegistryStore, toSummary } from '../src/main/modules/project-registry.ts'
 
@@ -28,6 +33,14 @@ const appDataDir = join(root, 'app-data')
 const projectDir = join(root, 'sample-project')
 const plainDir = join(root, 'plain-directory')
 const outsideDir = join(root, 'outside')
+
+/** 略大于文本预览阈值，用于验证预览只读取前缀 */
+const LARGE_TEXT_BYTES = TEXT_PREVIEW_LIMIT_BYTES + 16
+const LARGE_TEXT = 'a'.repeat(LARGE_TEXT_BYTES)
+
+/** UTF-16 文本：ASCII 字符的高字节是 0x00，用于验证 BOM 判定先于 NUL 判定 */
+const UTF16_LE_TEXT = 'UTF-16 小端文本\n第二行\n'
+const UTF16_BE_TEXT = 'UTF-16 大端文本\n'
 
 const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
@@ -83,6 +96,14 @@ function buildFixture(): void {
     '// 示例\nconst value: number = 42\nfunction greet(name: string): string {\n  return `hello ${name}`\n}\n'
   )
   writeFileSync(join(projectDir, 'notes.txt'), '第一行\n第二行\n')
+  writeFileSync(join(projectDir, 'large.txt'), LARGE_TEXT)
+  writeFileSync(
+    join(projectDir, 'utf16le.txt'),
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(UTF16_LE_TEXT, 'utf16le')])
+  )
+  const utf16beBody = Buffer.from(UTF16_BE_TEXT, 'utf16le')
+  utf16beBody.swap16()
+  writeFileSync(join(projectDir, 'utf16be.txt'), Buffer.concat([Buffer.from([0xfe, 0xff]), utf16beBody]))
   writeFileSync(join(projectDir, 'binary.bin'), Buffer.from([0x00, 0x01, 0x02, 0x00, 0xff]))
   writeFileSync(join(projectDir, 'legacy.txt'), Buffer.from([0xb0, 0xa1, 0xb0, 0xa1, 0xb2, 0xe2, 0xca, 0xd4]))
   writeFileSync(join(projectDir, 'active.svg'), '<svg onload="alert(1)"></svg>')
@@ -92,10 +113,16 @@ function buildFixture(): void {
   symlinkSync(projectDir, join(root, 'project-alias'), process.platform === 'win32' ? 'junction' : 'dir')
   // 指向项目外的联接：用于验证浏览阶段不放行项目外目标
   symlinkSync(outsideDir, junction, process.platform === 'win32' ? 'junction' : 'dir')
+  // 指向项目内的目录联接：用于验证列表按真实目标类型识别目录
+  symlinkSync(
+    join(projectDir, 'docs'),
+    join(projectDir, 'docs-alias'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  )
 }
 
 function cleanup(): void {
-  for (const link of [join(root, 'project-alias'), join(projectDir, 'junction')]) {
+  for (const link of [join(root, 'project-alias'), join(projectDir, 'junction'), join(projectDir, 'docs-alias')]) {
     try {
       rmSync(link, { force: true })
     } catch {
@@ -506,6 +533,13 @@ function main(): void {
     'README.md 有尺寸与时间'
   )
   check('根目录面包屑为空', listing.breadcrumb.length === 0, `长度=${listing.breadcrumb.length}`)
+  check(
+    '项目内目录联接按目录列出',
+    listing.entries.some(
+      (entry) => entry.name === 'docs-alias' && entry.kind === 'directory' && entry.isLink && entry.size === 0
+    ),
+    listing.entries.find((entry) => entry.name === 'docs-alias')?.kind ?? '未列出 docs-alias'
+  )
 
   const nested = listDirectory({ projectRoot: projectDir, relativePath: 'src' })
   check(
@@ -551,6 +585,23 @@ function main(): void {
     `kind=${textPreview.kind} lines=${String(textPreview.lineCount)}`
   )
 
+  const largePreview = previewFile({ projectRoot: projectDir, relativePath: 'large.txt' })
+  check(
+    '超大文本只返回阈值内的前缀并标记截断',
+    largePreview.kind === 'text' &&
+      largePreview.truncated === true &&
+      largePreview.size === LARGE_TEXT_BYTES &&
+      (largePreview.text ?? '').length === TEXT_PREVIEW_LIMIT_BYTES,
+    `size=${largePreview.size} text=${largePreview.text?.length ?? -1} truncated=${String(largePreview.truncated)}`
+  )
+
+  const prefixProbe = readFilePrefix(join(projectDir, 'large.txt'), 1024)
+  check(
+    '前缀读取最多只分配请求的字节数',
+    prefixProbe.buffer.length === 1024 && prefixProbe.totalBytes === LARGE_TEXT_BYTES,
+    `read=${prefixProbe.buffer.length} total=${prefixProbe.totalBytes}`
+  )
+
   const imagePreview = previewFile({ projectRoot: projectDir, relativePath: 'assets/logo.png' })
   check(
     '图片预览返回 data URL',
@@ -572,6 +623,22 @@ function main(): void {
     '非 UTF-8 文件给出编码说明',
     legacyPreview.kind === 'unsupported' && (legacyPreview.message ?? '').includes('UTF-8'),
     String(legacyPreview.message)
+  )
+
+  const utf16lePreview = previewFile({ projectRoot: projectDir, relativePath: 'utf16le.txt' })
+  check(
+    'UTF-16LE BOM 文本按文本预览而非二进制',
+    utf16lePreview.kind === 'text' && utf16lePreview.text === UTF16_LE_TEXT,
+    `kind=${utf16lePreview.kind} message=${String(utf16lePreview.message)}`
+  )
+
+  const utf16bePreview = previewFile({ projectRoot: projectDir, relativePath: 'utf16be.txt' })
+  check(
+    'UTF-16BE BOM 文本按大端解码',
+    utf16bePreview.kind === 'text' &&
+      utf16bePreview.text === UTF16_BE_TEXT &&
+      (utf16bePreview.message ?? '').includes('大端'),
+    `kind=${utf16bePreview.kind} text=${JSON.stringify(utf16bePreview.text)}`
   )
 
   const svgPreview = previewFile({ projectRoot: projectDir, relativePath: 'active.svg' })

@@ -1,9 +1,15 @@
-import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import type { FileEntry, FileListResult, FilePreview, PreviewKind } from '@shared/types'
 import { resolveProjectPath } from '../security/path-guard'
 import { highlightCode, languageForExtension } from './code-highlight'
-import { type PreviewPolicy, readAsset, renderMarkdownFile, TEXT_PREVIEW_LIMIT_BYTES } from './markdown-preview'
+import {
+  type PreviewPolicy,
+  readAsset,
+  readFilePrefix,
+  renderMarkdownFile,
+  TEXT_PREVIEW_LIMIT_BYTES
+} from './markdown-preview'
 
 /**
  * 文件浏览与只读预览（设计稿 4.2，M1-4／M1-5）。
@@ -135,9 +141,13 @@ export function listDirectory(request: ListDirectoryRequest): FileListResult {
 
     let size = 0
     let modifiedAt = new Date(0).toISOString()
+    // 目录联接在 Dirent 上不是目录；解析成功后以真实目标类型为准，
+    // 否则项目内的联接目录会被当成普通文件列出、无法进入。
+    let isDirectory = item.isDirectory
     try {
       const stats = statSync(child.absolutePath)
-      size = item.isDirectory ? 0 : stats.size
+      isDirectory = stats.isDirectory()
+      size = isDirectory ? 0 : stats.size
       modifiedAt = stats.mtime.toISOString()
     } catch {
       // 读取失败不影响列出
@@ -146,7 +156,7 @@ export function listDirectory(request: ListDirectoryRequest): FileListResult {
     entries.push({
       name: item.name,
       relativePath: childRelative,
-      kind: item.isDirectory ? 'directory' : 'file',
+      kind: isDirectory ? 'directory' : 'file',
       size,
       modifiedAt,
       isLink: item.isLink
@@ -193,18 +203,21 @@ interface DecodedText {
  * 二进制（含 NUL 字节）与编码不支持的场景分别给出明确结论（设计稿 4.3）。
  */
 function decodeText(buffer: Buffer): DecodedText {
-  if (buffer.includes(0)) {
-    return { ok: false, text: '', message: '这是二进制文件，第一版不提供内容预览。' }
-  }
-
-  // UTF-16 BOM
+  // BOM 判定必须在 NUL 检查之前：UTF-16 文本中 ASCII 字符的高字节就是 0x00，
+  // 先查 NUL 会把所有 UTF-16 文件误判为二进制，使下面的 BOM 分支永远不可达。
   if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
     return { ok: true, text: buffer.subarray(2).toString('utf16le'), message: null }
   }
   if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
-    const swapped = Buffer.from(buffer.subarray(2))
+    // 前缀读取可能截断在代码单元中间；swap16 要求偶数字节，先裁掉残缺尾字节
+    const body = buffer.subarray(2, 2 + ((buffer.length - 2) & ~1))
+    const swapped = Buffer.from(body)
     swapped.swap16()
     return { ok: true, text: swapped.toString('utf16le'), message: '文件为 UTF-16 大端编码，已按 UTF-16 解码。' }
+  }
+
+  if (buffer.includes(0)) {
+    return { ok: false, text: '', message: '这是二进制文件，第一版不提供内容预览。' }
   }
 
   const text = buffer.toString('utf8')
@@ -234,6 +247,13 @@ function sniffContent(absolutePath: string): 'text' | 'binary' | 'unknown' {
     const read = readSync(handle, buffer, 0, buffer.length, 0)
     const sample = buffer.subarray(0, read)
     if (sample.length === 0) return 'text'
+    // 与 decodeText 同理：UTF-16 BOM 文件必然含 NUL 字节，不能按二进制处理
+    if (
+      sample.length >= 2 &&
+      ((sample[0] === 0xff && sample[1] === 0xfe) || (sample[0] === 0xfe && sample[1] === 0xff))
+    ) {
+      return 'text'
+    }
     if (sample.includes(0)) return 'binary'
 
     const text = sample.toString('utf8')
@@ -363,19 +383,18 @@ export function previewFile(request: PreviewFileRequest): FilePreview {
     }
   }
 
-  // 文本与代码
-  let buffer: Buffer
+  // 文本与代码：只读取阈值内的前缀，避免超大文件整块读入内存
+  let prefix: ReturnType<typeof readFilePrefix>
   try {
-    buffer = readFileSync(resolution.absolutePath)
+    prefix = readFilePrefix(resolution.absolutePath, TEXT_PREVIEW_LIMIT_BYTES)
   } catch (cause) {
     return { ...base, message: errorMessage(cause) }
   }
 
-  const truncated = buffer.byteLength > TEXT_PREVIEW_LIMIT_BYTES
-  const effective = truncated ? buffer.subarray(0, TEXT_PREVIEW_LIMIT_BYTES) : buffer
-  const decoded = decodeText(effective)
+  const truncated = prefix.totalBytes > TEXT_PREVIEW_LIMIT_BYTES
+  const decoded = decodeText(prefix.buffer)
   if (!decoded.ok) {
-    return { ...base, kind: 'unsupported', size: buffer.byteLength, message: decoded.message }
+    return { ...base, kind: 'unsupported', size: prefix.totalBytes, message: decoded.message }
   }
 
   if (kind === 'code') {
@@ -386,7 +405,7 @@ export function previewFile(request: PreviewFileRequest): FilePreview {
       language,
       text: decoded.text,
       highlightedHtml: highlighted.html,
-      size: buffer.byteLength,
+      size: prefix.totalBytes,
       truncated,
       lineCount: highlighted.lineCount,
       message:
@@ -398,7 +417,7 @@ export function previewFile(request: PreviewFileRequest): FilePreview {
     ...base,
     kind: 'text',
     text: decoded.text,
-    size: buffer.byteLength,
+    size: prefix.totalBytes,
     truncated,
     lineCount: decoded.text.split('\n').length,
     message: decoded.message

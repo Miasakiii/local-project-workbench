@@ -50,6 +50,9 @@ export function parseUnifiedDiff(source: string): ParsedDiff {
   let current: DiffHunk | null = null
   let oldCursor = 0
   let newCursor = 0
+  /** hunk 标题声明的剩余行数；用于区分文件头 `--- /+++ ` 与内容行 `--… /++…` */
+  let oldRemaining = 0
+  let newRemaining = 0
 
   for (const line of lines) {
     // 文件级标记：二进制与新增/删除/重命名
@@ -78,12 +81,16 @@ export function parseUnifiedDiff(source: string): ParsedDiff {
       result.status = 'renamed'
       continue
     }
-    // 文件头与其他元信息：跳过，不进入 hunk
-    if (
+
+    const hunkActive = current !== null && (oldRemaining > 0 || newRemaining > 0)
+
+    // 文件头与其他元信息：跳过，不进入 hunk。
+    // `--- `/`+++ ` 在 hunk 计数未耗尽时是内容行：删除 `--…`、新增 `++…`。
+    if (line.startsWith('--- ') || line.startsWith('+++ ')) {
+      if (!hunkActive) continue
+    } else if (
       line.startsWith('diff --git ') ||
       line.startsWith('index ') ||
-      line.startsWith('--- ') ||
-      line.startsWith('+++ ') ||
       line.startsWith('old mode') ||
       line.startsWith('new mode') ||
       line.startsWith('similarity index') ||
@@ -108,6 +115,8 @@ export function parseUnifiedDiff(source: string): ParsedDiff {
       }
       oldCursor = oldStart
       newCursor = newStart
+      oldRemaining = oldCount
+      newRemaining = newCount
       result.hunks.push(current)
       continue
     }
@@ -131,18 +140,22 @@ export function parseUnifiedDiff(source: string): ParsedDiff {
       current.lines.push({ kind: 'add', oldLine: null, newLine: newCursor, text })
       newCursor += 1
       result.addedLines += 1
+      if (newRemaining > 0) newRemaining -= 1
       continue
     }
     if (marker === '-') {
       current.lines.push({ kind: 'remove', oldLine: oldCursor, newLine: null, text })
       oldCursor += 1
       result.removedLines += 1
+      if (oldRemaining > 0) oldRemaining -= 1
       continue
     }
     if (marker === ' ') {
       current.lines.push({ kind: 'context', oldLine: oldCursor, newLine: newCursor, text })
       oldCursor += 1
       newCursor += 1
+      if (oldRemaining > 0) oldRemaining -= 1
+      if (newRemaining > 0) newRemaining -= 1
       continue
     }
 
@@ -150,6 +163,8 @@ export function parseUnifiedDiff(source: string): ParsedDiff {
     current.lines.push({ kind: 'context', oldLine: oldCursor, newLine: newCursor, text: line })
     oldCursor += 1
     newCursor += 1
+    if (oldRemaining > 0) oldRemaining -= 1
+    if (newRemaining > 0) newRemaining -= 1
   }
 
   if (result.hunks.length === 0 && !result.binary && result.status === 'modified') {

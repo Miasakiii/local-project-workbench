@@ -12,7 +12,7 @@
  *   node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m2-diff.mts
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,30 +29,39 @@ function check(name: string, pass: boolean, detail: string): void {
   CHECKS.push({ name, pass, detail })
 }
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true })
+/**
+ * 异步 git：本类环境对同步派生外部进程（execFileSync）返回 EBUSY，
+ * 统一改用异步 execFile。
+ */
+function git(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd, encoding: 'utf8', windowsHide: true }, (error, stdout) => {
+      if (error) reject(error)
+      else resolve(stdout)
+    })
+  })
 }
 
-function statusOf(cwd: string): string {
+async function statusOf(cwd: string): Promise<string> {
   return git(cwd, ['status', '--porcelain=v1', '--untracked-files=all'])
 }
 
-function buildFixtures(): void {
+async function buildFixtures(): Promise<void> {
   rmSync(root, { recursive: true, force: true })
   mkdirSync(repo, { recursive: true })
   mkdirSync(noHeadRepo, { recursive: true })
 
-  git(repo, ['init', '--quiet'])
-  git(repo, ['config', 'user.email', 'verify@example.com'])
-  git(repo, ['config', 'user.name', 'verify'])
-  git(repo, ['config', 'core.autocrlf', 'false'])
+  await git(repo, ['init', '--quiet'])
+  await git(repo, ['config', 'user.email', 'verify@example.com'])
+  await git(repo, ['config', 'user.name', 'verify'])
+  await git(repo, ['config', 'core.autocrlf', 'false'])
 
   writeFileSync(join(repo, '普通 文件.txt'), ['第一行', '第二行', '第三行', '第四行', '第五行', ''].join('\n'), 'utf8')
   writeFileSync(join(repo, 'to-delete.txt'), 'will be deleted\n', 'utf8')
   writeFileSync(join(repo, 'binary.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]))
   writeFileSync(join(repo, 'old-name.txt'), 'renamed content\n', 'utf8')
-  git(repo, ['add', '.'])
-  git(repo, ['commit', '--quiet', '-m', '初始提交'])
+  await git(repo, ['add', '.'])
+  await git(repo, ['commit', '--quiet', '-m', '初始提交'])
 
   // 未暂存：修改中间两行
   writeFileSync(
@@ -62,7 +71,7 @@ function buildFixtures(): void {
   )
   // 已暂存：另建文件并暂存
   writeFileSync(join(repo, 'staged.txt'), '暂存内容\n', 'utf8')
-  git(repo, ['add', 'staged.txt'])
+  await git(repo, ['add', 'staged.txt'])
   // 未跟踪
   writeFileSync(join(repo, 'untracked.txt'), ['a', 'b', 'c', ''].join('\n'), 'utf8')
   // 删除
@@ -70,16 +79,16 @@ function buildFixtures(): void {
   // 二进制修改
   writeFileSync(join(repo, 'binary.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0xfd]))
   // 重命名
-  git(repo, ['mv', 'old-name.txt', 'new-name.txt'])
+  await git(repo, ['mv', 'old-name.txt', 'new-name.txt'])
   // 超大未跟踪文件
   const huge = Array.from({ length: MAX_DIFF_LINES + 500 }, (_, index) => `line ${index}`).join('\n')
   writeFileSync(join(repo, 'huge.txt'), `${huge}\n`, 'utf8')
 
-  git(noHeadRepo, ['init', '--quiet'])
-  git(noHeadRepo, ['config', 'user.email', 'verify@example.com'])
-  git(noHeadRepo, ['config', 'user.name', 'verify'])
+  await git(noHeadRepo, ['init', '--quiet'])
+  await git(noHeadRepo, ['config', 'user.email', 'verify@example.com'])
+  await git(noHeadRepo, ['config', 'user.name', 'verify'])
   writeFileSync(join(noHeadRepo, 'first.txt'), 'first content\n', 'utf8')
-  git(noHeadRepo, ['add', 'first.txt'])
+  await git(noHeadRepo, ['add', 'first.txt'])
 }
 
 /* ---------- 一、解析层 ---------- */
@@ -165,6 +174,29 @@ function verifyParser(): void {
     `oldCount=${String(shortHeader.hunks[0]?.oldCount)} newCount=${String(shortHeader.hunks[0]?.newCount)}`
   )
 
+  // `--- `/`+++ ` 既可能是文件头，也可能是 hunk 内以 `--`／`++` 开头的内容。
+  // 只有 hunk 声明的行数未耗尽时才按内容解析。
+  const dashContent = parseUnifiedDiff(['@@ -1 +1 @@', '--- old text', '+++ new text', ''].join('\n'))
+  const dashLines = dashContent.hunks[0]?.lines ?? []
+  check(
+    'hunk 内以 --- / +++ 开头的内容行不被当作文件头',
+    dashLines.length === 2 &&
+      dashLines[0]?.kind === 'remove' &&
+      dashLines[0]?.text === '-- old text' &&
+      dashLines[1]?.kind === 'add' &&
+      dashLines[1]?.text === '++ new text',
+    dashLines.map((line) => `${line.kind}:${line.text}`).join(' | ')
+  )
+
+  const nextFileHeader = parseUnifiedDiff(
+    ['@@ -1 +1 @@', '-a', '+b', '--- a/next.txt', '+++ b/next.txt', '@@ -1 +1 @@', '-c', '+d', ''].join('\n')
+  )
+  check(
+    'hunk 计数耗尽后的 --- / +++ 仍按文件头跳过',
+    nextFileHeader.hunks.length === 2 && nextFileHeader.hunks[1]?.lines.length === 2,
+    `hunks=${nextFileHeader.hunks.length} 第二段行数=${String(nextFileHeader.hunks[1]?.lines.length)}`
+  )
+
   const newFile = parseUnifiedDiff(['new file mode 100644', '@@ -0,0 +1,2 @@', '+a', '+b', ''].join('\n'))
   check('识别新增文件', newFile.status === 'added', `status=${newFile.status}`)
 
@@ -220,7 +252,7 @@ function verifyParser(): void {
 /* ---------- 二、真实仓库 ---------- */
 
 async function verifyRepository(): Promise<void> {
-  const before = statusOf(repo)
+  const before = await statusOf(repo)
 
   const unstaged = await fileDiff({
     projectId: 'p',
@@ -324,7 +356,7 @@ async function verifyRepository(): Promise<void> {
     `stale=${String(outside.stale)} error=${String(outside.error)}`
   )
 
-  const after = statusOf(repo)
+  const after = await statusOf(repo)
   check('差异查询不修改工作区与索引', before === after, before === after ? '状态未变' : '状态发生变化')
 
   /* ---------- 无 HEAD 仓库 ---------- */
@@ -360,14 +392,14 @@ async function verifyRepository(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  buildFixtures()
+  await buildFixtures()
   verifyParser()
   await verifyRepository()
 
   console.log('=== M2 验证（一）：只读差异解析与查询 ===')
   console.log(`样例仓库：${repo}`)
   console.log(`运行时：Node ${process.versions.node}　平台：${process.platform}`)
-  console.log(`Git：${git(repo, ['--version']).trim()}\n`)
+  console.log(`Git：${(await git(repo, ['--version'])).trim()}\n`)
 
   let passed = 0
   for (const item of CHECKS) {
