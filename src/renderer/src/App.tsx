@@ -8,6 +8,15 @@ import { SettingsPage } from './pages/SettingsPage'
 
 const SIDEBAR_PREFERENCE_KEY = 'workbench.sidebarOpen'
 
+/**
+ * 同时打开的项目数上限。
+ *
+ * 已打开的项目保持挂载（终端会话、文件监听、组件状态都保留），打开过多项目后
+ * 内存与文件监听压力会累积。达到上限时自动关闭最久未活动、且没有终端会话在
+ * 运行的项目——有会话在跑的项目不会被自动关闭，避免静默中断用户工作。
+ */
+const MAX_OPEN_PROJECTS = 8
+
 function readSidebarPreference(): boolean {
   try {
     return window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) !== 'false'
@@ -39,6 +48,9 @@ export default function App(): React.JSX.Element {
   const [openProjectIds, setOpenProjectIds] = useState<string[]>([])
   /** 当前正在查看的项目；null 表示停留在项目库 */
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  /** 项目最近一次被激活的顺序号：打开上限驱逐时据此找「最久未活动」的项目 */
+  const activationOrderRef = useRef(new Map<string, number>())
+  const activationTickRef = useRef(0)
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(readSidebarPreference)
   /** 待确认关闭的项目：该项目有终端会话在运行 */
   const [pendingCloseProjectId, setPendingCloseProjectId] = useState<string | null>(null)
@@ -110,15 +122,42 @@ export default function App(): React.JSX.Element {
     setActiveProjectId((current) => (current !== null && !known.has(current) ? null : current))
   }, [projects])
 
-  const activateProject = useCallback(async (projectId: string) => {
-    setStartupNotice(null)
-    setOpenProjectIds((current) => (current.includes(projectId) ? current : [...current, projectId]))
-    setActiveProjectId(projectId)
-    const updated = await window.workbench.project.open({ projectId })
-    if (updated !== null) {
-      setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)))
-    }
-  }, [])
+  const activateProject = useCallback(
+    async (projectId: string) => {
+      setStartupNotice(null)
+      activationTickRef.current += 1
+      activationOrderRef.current.set(projectId, activationTickRef.current)
+      setOpenProjectIds((current) => {
+        if (current.includes(projectId)) return current
+        // 达到上限时，自动关闭最久未活动且没有终端会话在运行的项目。
+        // 有会话在跑的项目不会被自动关闭——避免静默中断用户工作。
+        if (current.length >= MAX_OPEN_PROJECTS) {
+          const evictable = current.filter((id) => runningProjects[id] !== true)
+          if (evictable.length > 0) {
+            let toEvict = evictable[0] as string
+            let oldestOrder = activationOrderRef.current.get(toEvict) ?? 0
+            for (const id of evictable.slice(1)) {
+              const order = activationOrderRef.current.get(id) ?? 0
+              if (order < oldestOrder) {
+                oldestOrder = order
+                toEvict = id
+              }
+            }
+            return [...current.filter((id) => id !== toEvict), projectId]
+          }
+          // 全部有会话在运行：不驱逐，允许临时超出上限
+          return [...current, projectId]
+        }
+        return [...current, projectId]
+      })
+      setActiveProjectId(projectId)
+      const updated = await window.workbench.project.open({ projectId })
+      if (updated !== null) {
+        setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)))
+      }
+    },
+    [runningProjects]
+  )
 
   /**
    * 首帧加载：列表 + 启动位置。
