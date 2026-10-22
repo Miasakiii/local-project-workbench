@@ -10,7 +10,7 @@
  *   node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-m2-degrade.mts
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,29 +29,38 @@ function check(name: string, pass: boolean, detail: string): void {
   CHECKS.push({ name, pass, detail })
 }
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true })
+/**
+ * 异步 git：本类环境对同步派生外部进程（execFileSync）返回 EBUSY，
+ * 统一改用异步 execFile。
+ */
+function git(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd, encoding: 'utf8', windowsHide: true }, (error, stdout) => {
+      if (error) reject(error)
+      else resolve(stdout)
+    })
+  })
 }
 
-function buildFixtures(): void {
+async function buildFixtures(): Promise<void> {
   rmSync(root, { recursive: true, force: true })
   mkdirSync(repo, { recursive: true })
   mkdirSync(noHeadRepo, { recursive: true })
   mkdirSync(plainDir, { recursive: true })
 
-  git(repo, ['init', '--quiet'])
-  git(repo, ['config', 'user.email', 'verify@example.com'])
-  git(repo, ['config', 'user.name', 'verify'])
-  git(repo, ['config', 'core.autocrlf', 'false'])
+  await git(repo, ['init', '--quiet'])
+  await git(repo, ['config', 'user.email', 'verify@example.com'])
+  await git(repo, ['config', 'user.name', 'verify'])
+  await git(repo, ['config', 'core.autocrlf', 'false'])
   writeFileSync(join(repo, 'a.txt'), 'a\n', 'utf8')
-  git(repo, ['add', 'a.txt'])
-  git(repo, ['commit', '--quiet', '-m', '初始提交'])
+  await git(repo, ['add', 'a.txt'])
+  await git(repo, ['commit', '--quiet', '-m', '初始提交'])
 
-  git(noHeadRepo, ['init', '--quiet'])
-  git(noHeadRepo, ['config', 'user.email', 'verify@example.com'])
-  git(noHeadRepo, ['config', 'user.name', 'verify'])
+  await git(noHeadRepo, ['init', '--quiet'])
+  await git(noHeadRepo, ['config', 'user.email', 'verify@example.com'])
+  await git(noHeadRepo, ['config', 'user.name', 'verify'])
   writeFileSync(join(noHeadRepo, 'first.txt'), 'first\n', 'utf8')
-  git(noHeadRepo, ['add', 'first.txt'])
+  await git(noHeadRepo, ['add', 'first.txt'])
 
   writeFileSync(join(plainDir, 'note.txt'), 'note\n', 'utf8')
 }
@@ -164,7 +173,7 @@ async function verifyDegradation(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  buildFixtures()
+  await buildFixtures()
   verifyWatchRules()
   await verifyDegradation()
 

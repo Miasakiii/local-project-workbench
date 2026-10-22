@@ -6,27 +6,28 @@
  * 用法：node --experimental-transform-types --import ./scripts/ts-loader/register.mjs scripts/verify-git-repo-m0.mts
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { countByGroup, parsePorcelainV2 } from '../src/main/modules/git-parse.ts'
 import { detectRepositoryRoot } from '../src/main/modules/git-query.ts'
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', ['--no-optional-locks', ...args], {
-    cwd,
-    encoding: 'utf8',
-    windowsHide: true
+/**
+ * 异步 git：本类环境对同步派生外部进程（execFileSync）返回 EBUSY，
+ * 统一改用异步 execFile。
+ */
+function git(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('git', ['--no-optional-locks', ...args], { cwd, encoding: 'utf8', windowsHide: true }, (error, stdout) => {
+      if (error) reject(error)
+      else resolve(stdout)
+    })
   })
 }
 
-function statusOf(cwd: string) {
-  const output = execFileSync(
-    'git',
-    ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z'],
-    { cwd, windowsHide: true }
-  )
+async function statusOf(cwd: string) {
+  const output = await git(cwd, ['status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z'])
   return parsePorcelainV2(output)
 }
 
@@ -34,23 +35,23 @@ const checks: Array<[string, boolean, string]> = []
 const root = mkdtempSync(join(tmpdir(), 'lpw-git-'))
 
 try {
-  git(root, ['init', '-q', '-b', 'main'])
-  git(root, ['config', 'user.name', 'M0 Verify'])
-  git(root, ['config', 'user.email', 'm0@example.com'])
+  await git(root, ['init', '-q', '-b', 'main'])
+  await git(root, ['config', 'user.name', 'M0 Verify'])
+  await git(root, ['config', 'user.email', 'm0@example.com'])
 
   writeFileSync(join(root, '已修改.txt'), 'v1\n')
   writeFileSync(join(root, '已暂存.txt'), 'v1\n')
   writeFileSync(join(root, '原名 文件.txt'), 'v1\n')
-  git(root, ['add', '.'])
-  git(root, ['commit', '-q', '-m', '初始提交'])
+  await git(root, ['add', '.'])
+  await git(root, ['commit', '-q', '-m', '初始提交'])
 
   writeFileSync(join(root, '已修改.txt'), 'v2\n')
   writeFileSync(join(root, '已暂存.txt'), 'v2\n')
-  git(root, ['add', '已暂存.txt'])
+  await git(root, ['add', '已暂存.txt'])
   writeFileSync(join(root, '未跟踪.md'), '# 未跟踪\n')
-  git(root, ['mv', '原名 文件.txt', '改名 文件.txt'])
+  await git(root, ['mv', '原名 文件.txt', '改名 文件.txt'])
 
-  const { branch, entries } = statusOf(root)
+  const { branch, entries } = await statusOf(root)
   const find = (path: string, group: string) =>
     entries.some((entry) => entry.relativePath === path && entry.group === group)
 
@@ -79,9 +80,9 @@ try {
 // 无 HEAD 场景：仅 init、无任何提交
 const empty = mkdtempSync(join(tmpdir(), 'lpw-git-empty-'))
 try {
-  git(empty, ['init', '-q', '-b', 'main'])
+  await git(empty, ['init', '-q', '-b', 'main'])
   writeFileSync(join(empty, '待提交.txt'), 'x\n')
-  const { branch, entries } = statusOf(empty)
+  const { branch, entries } = await statusOf(empty)
   checks.push([
     '无 HEAD 时不报错',
     entries.length === 1 && entries[0]?.group === 'untracked',
@@ -96,7 +97,7 @@ try {
   const repoRoot = mkdtempSync(join(tmpdir(), 'lpw-git-root-'))
   const nonRepo = mkdtempSync(join(tmpdir(), 'lpw-git-nonrepo-'))
   try {
-    git(repoRoot, ['init', '-q', '-b', 'main'])
+    await git(repoRoot, ['init', '-q', '-b', 'main'])
     const subdir = join(repoRoot, 'sub', 'deep')
     mkdirSync(subdir, { recursive: true })
     const norm = (value: string): string => realpathSync(value).replace(/\\/g, '/').toLowerCase()

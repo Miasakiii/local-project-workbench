@@ -248,18 +248,35 @@ function runChild() {
 if (process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE) {
   runChild()
 } else {
-  const { spawnSync } = require('node:child_process')
+  // 异步 spawn 而非 spawnSync：本类环境对同步派生 Electron 返回 EBUSY
+  // （CreateProcess 被环境层拦截），异步 spawn 正常。输出实时转发，180s 看门狗。
+  const { spawn } = require('node:child_process')
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
 
-  const result = spawnSync(ELECTRON_BIN, [__filename], {
+  const child = spawn(ELECTRON_BIN, [__filename], {
     cwd: ROOT,
     env,
-    encoding: 'utf8',
-    timeout: 180000,
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
-  process.stdout.write(result.stdout || '')
-  if (result.stderr) process.stderr.write(result.stderr)
-  process.exit(result.status === null ? 1 : result.status)
+  child.stdout.on('data', (chunk) => process.stdout.write(chunk))
+  child.stderr.on('data', (chunk) => process.stderr.write(chunk))
+
+  const watchdog = setTimeout(() => {
+    process.stderr.write('真实回收站验证超过 180 秒，已终止。\n')
+    child.kill()
+    process.exit(1)
+  }, 180000)
+
+  child.on('error', (error) => {
+    clearTimeout(watchdog)
+    process.stderr.write(`无法启动 Electron：${error.message}\n`)
+    process.exit(1)
+  })
+
+  child.on('exit', (code) => {
+    clearTimeout(watchdog)
+    process.exit(code === null ? 1 : code)
+  })
 }

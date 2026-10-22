@@ -26,6 +26,16 @@ const UNPACKED = dirArg === undefined ? path.join(ROOT, 'release', 'win-unpacked
 const DEBUG_PORT = 9333
 const KEEP = process.argv.includes('--keep')
 
+/**
+ * B1 软渲染回退实验开关：VERIFY_PACKAGED_GL_FLAGS 透传追加的 Chromium 参数，
+ * 例如 --use-gl=swiftshader。默认不传，行为与从前完全一致；用于在无 GPU 环境
+ * 显式指定软件渲染后端复测（R11／GPU DLL 裁剪判定的证据之一）。
+ */
+const extraGlFlags = (process.env.VERIFY_PACKAGED_GL_FLAGS ?? '')
+  .split(' ')
+  .map((item) => item.trim())
+  .filter((item) => item.length > 0)
+
 const results = []
 function check(name, pass, detail) {
   results.push({ name, pass, detail })
@@ -158,7 +168,15 @@ async function main() {
 
   console.log('=== 分发产物验证（真实打包目录 + CDP 驱动）===\n')
   console.log(`可执行文件：${path.relative(ROOT, executable)}`)
-  console.log(`临时用户数据：${userDataDir}\n`)
+  console.log(`临时用户数据：${userDataDir}`)
+  if (extraGlFlags.length > 0) console.log(`追加 GL 参数：${extraGlFlags.join(' ')}`)
+  console.log('')
+
+  // 与 smoke-m1 / measure-framework 同一约定：部分环境会注入 ELECTRON_RUN_AS_NODE，
+  // 该变量会让 Electron 以纯 Node 启动（拒绝 --remote-debugging-port 等 Chromium
+  // 参数，表现为 "bad option"），派生子进程必须显式删除。
+  const childEnv = { ...process.env }
+  delete childEnv.ELECTRON_RUN_AS_NODE
 
   const child = spawn(
     executable,
@@ -167,9 +185,10 @@ async function main() {
       `--user-data-dir=${userDataDir}`,
       // 与本机其它 Electron 验证脚本一致：无显示会话时 GPU 沙箱会初始化失败
       '--disable-gpu-sandbox',
-      '--no-sandbox'
+      '--no-sandbox',
+      ...extraGlFlags
     ],
-    { cwd: UNPACKED, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
+    { cwd: UNPACKED, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv }
   )
 
   let childOutput = ''
