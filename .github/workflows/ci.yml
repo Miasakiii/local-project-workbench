@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 终端套件依赖 Windows ConPTY，node-pty 在 Linux/macOS 上行为不同，
+# 因此统一在 Windows runner 上运行完整验证。
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 代码检查（biome lint）
+        run: npm run lint
+
+      - name: 文件体积守卫
+        run: npm run check:file-size
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 构建
+        run: npm run build
+
+      - name: 完整验证套件
+        run: npm run verify:all
