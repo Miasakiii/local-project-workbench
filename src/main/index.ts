@@ -111,6 +111,15 @@ function liveWindow(): BrowserWindow | null {
   return BrowserWindow.getAllWindows().find((item) => !item.isDestroyed()) ?? null
 }
 
+/** 两个地址是否同源；任一无法解析都视为不同源。 */
+function isSameOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin
+  } catch {
+    return false
+  }
+}
+
 /** 清理进程级服务；可重复调用。 */
 function disposeServices(): void {
   terminals.disposeAll()
@@ -180,9 +189,10 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  // 限制页面导航：只允许停留在开发服务器或本地打包页面
+  // 限制页面导航：只允许停留在开发服务器或本地打包页面。
+  // 开发态按 origin 比较而非前缀——`http://host:port.evil.com` 也能通过 startsWith。
   window.webContents.on('will-navigate', (event, url) => {
-    if (isDev && rendererDevUrl !== undefined && url.startsWith(rendererDevUrl)) return
+    if (isDev && rendererDevUrl !== undefined && isSameOrigin(url, rendererDevUrl)) return
     event.preventDefault()
   })
 
@@ -218,9 +228,29 @@ function createIpcContext(): IpcContext {
   }
 }
 
+/**
+ * 单实例锁：登记表、文件监听与终端会话都假定只有一个应用实例。
+ * 第二个实例不启动任何服务，只把已有窗口唤到前台后退出，
+ * 避免两个进程同时改写同一份应用数据。
+ */
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const window = liveWindow()
+    if (window === null) return
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  })
+}
+
 /* ---------------- 生命周期 ---------------- */
 
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return
   app.setAppUserModelId('com.miasakii.local-project-workbench')
   registerIpcHandlers(createIpcContext())
   createWindow()

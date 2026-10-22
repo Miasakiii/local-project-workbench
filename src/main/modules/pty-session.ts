@@ -27,6 +27,8 @@ import { resolveShellSpec } from './shell-select'
 interface Session {
   id: string
   projectId: string
+  /** 创建会话的 WebContents；write/resize/dispose 必须来自同一 sender */
+  owner: WebContents
   child: IPty
   shell: string
   cwd: string
@@ -105,6 +107,7 @@ export class PtySessionManager {
     const session: Session = {
       id,
       projectId: request.projectId,
+      owner: sender,
       child,
       shell: shell.path,
       cwd,
@@ -132,21 +135,31 @@ export class PtySessionManager {
     return { sessionId: id, shell: shell.path, cwd }
   }
 
-  write(request: TerminalWriteRequest): void {
+  /**
+   * 向会话写入数据。
+   *
+   * 会话绑定创建它的 WebContents（`owner`）：只有同一 sender 能写入。
+   * 当前单窗口模型下二者必然相同；多窗口场景下这防止一个窗口的渲染进程
+   * 通过猜测 sessionId 向另一个窗口的终端注入输入。
+   */
+  write(sender: WebContents, request: TerminalWriteRequest): void {
     const session = this.sessions.get(request.sessionId)
     if (!session) return
+    if (session.owner !== sender) return
     session.child.write(request.data)
   }
 
-  resize(request: TerminalResizeRequest): void {
+  resize(sender: WebContents, request: TerminalResizeRequest): void {
     const session = this.sessions.get(request.sessionId)
     if (!session) return
+    if (session.owner !== sender) return
     session.child.resize(clampDimension(request.cols, 80), clampDimension(request.rows, 24))
   }
 
-  dispose(sessionId: string): void {
+  dispose(sender: WebContents, sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
+    if (session.owner !== sender) return
     this.sessions.delete(sessionId)
     try {
       session.child.kill()
@@ -157,7 +170,16 @@ export class PtySessionManager {
 
   /** 退出前统一处理。不承诺清理自行脱离的后台进程（设计稿 6.2）。 */
   disposeAll(): void {
-    for (const id of [...this.sessions.keys()]) this.dispose(id)
+    for (const id of [...this.sessions.keys()]) {
+      const session = this.sessions.get(id)
+      if (session === undefined) continue
+      this.sessions.delete(id)
+      try {
+        session.child.kill()
+      } catch {
+        // 会话可能已自行退出，忽略
+      }
+    }
   }
 
   /** 仅用于诊断：当前活动会话数量 */

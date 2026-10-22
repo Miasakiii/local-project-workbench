@@ -17,6 +17,9 @@ import type { IpcContext } from './context'
  * 信任门在**主进程**复核：`resolved.project.trusted` 来自登记表，渲染层声明的任何
  * 字段都不参与判定。界面侧同样有门（头部主按钮、Ctrl+`、文件栏右键三处），
  * 这里是纵深防御，保证新增入口漏检时也不会开出特权会话。
+ *
+ * 会话归属：write/resize/dispose 校验调用方 sender 与创建会话的 sender 一致，
+ * 防止多窗口场景下跨窗口越权操作终端。
  */
 export function registerTerminalIpc(ctx: IpcContext): void {
   ctx.handle(IpcChannel.terminalCreate, (event, request: TerminalCreateRequest): TerminalCreateResult => {
@@ -26,15 +29,15 @@ export function registerTerminalIpc(ctx: IpcContext): void {
     return ctx.terminals.create(event.sender, request, cwd, resolved.project.trusted === true)
   })
 
-  ctx.handle(IpcChannel.terminalWrite, (_event, request: TerminalWriteRequest): void => {
-    ctx.terminals.write(request)
+  ctx.handle(IpcChannel.terminalWrite, (event, request: TerminalWriteRequest): void => {
+    ctx.terminals.write(event.sender, request)
   })
 
-  ctx.handle(IpcChannel.terminalResize, (_event, request: TerminalResizeRequest): void => {
-    ctx.terminals.resize(request)
+  ctx.handle(IpcChannel.terminalResize, (event, request: TerminalResizeRequest): void => {
+    ctx.terminals.resize(event.sender, request)
   })
 
-  ctx.handle(IpcChannel.terminalDispose, (_event, sessionId: string): void => {
-    ctx.terminals.dispose(sessionId)
+  ctx.handle(IpcChannel.terminalDispose, (event, sessionId: string): void => {
+    ctx.terminals.dispose(event.sender, sessionId)
   })
 }

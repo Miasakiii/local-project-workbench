@@ -15,12 +15,40 @@ export interface TrustOptions {
 
 /**
  * 只接受来自应用自身页面的调用。
- * 开发服务器地址与打包后的 file:// 页面之外的来源一律拒绝。
+ *
+ * 判定分两层，缺一不可：
+ * 1. **来源 origin 精确匹配**。开发态只接受开发服务器 origin，生产态只接受
+ *    `file://` 页面。用 `URL` 解析后比较 origin 而非字符串前缀：`startsWith` 会被
+ *    `http://localhost:5173@evil.com` 这类 userinfo 写法绕过——字符串以
+ *    `http://localhost:5173` 开头，但真实 origin 是 `http://evil.com`。
+ *    `file://` 的 origin 是 opaque（`'null'`），因此按协议判断。
+ * 2. **senderFrame 非空**。`event.senderFrame` 为 null 说明调用不来自页面框架
+ *    （如已卸载的 frame 或非 frame 上下文），一律拒绝。
  */
 export function isTrustedSender(event: IpcMainInvokeEvent, options: TrustOptions): boolean {
-  const url = event.sender.getURL()
-  if (options.isDev && options.rendererDevUrl !== undefined && url.startsWith(options.rendererDevUrl)) return true
-  return url.startsWith('file://')
+  // 调用必须来自一个真实页面框架；frame 为 null 时拒绝（纵深防御）
+  if (event.senderFrame === null || event.senderFrame === undefined) return false
+
+  let parsed: URL
+  try {
+    parsed = new URL(event.sender.getURL())
+  } catch {
+    // URL 无法解析：不是合法页面地址，拒绝
+    return false
+  }
+
+  if (options.isDev && options.rendererDevUrl !== undefined) {
+    let devParsed: URL
+    try {
+      devParsed = new URL(options.rendererDevUrl)
+    } catch {
+      return false
+    }
+    if (parsed.origin === devParsed.origin) return true
+  }
+
+  // 生产态：只接受 file:// 页面。file:// 的 origin 是 opaque（'null'），按协议判断
+  return parsed.protocol === 'file:'
 }
 
 /**

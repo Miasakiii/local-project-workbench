@@ -13,6 +13,7 @@
  *   - 判定顺序：未信任时先报信任，连目录复核都不必走到
  *   - 信任通过后原有复核全部照旧：空目录／不存在／不是文件夹仍然拒绝
  *   - 信任通过后主路径不被破坏：真建会话、可写、可 dispose、幂等 dispose
+ *   - 会话归属：write/dispose 校验 sender 与创建会话的 sender 一致
  *   - IPC 侧读的是登记表的 trusted（该层由 smoke:m1 端到端验证）
  *
  * 用法：
@@ -147,7 +148,10 @@ async function main(): void {
 
   /* ---------- 信任通过后主路径不被破坏：真建会话 ---------- */
 
-  const created = manager.create(fakeSender(), request(), goodCwd, true)
+  // 主路径测试与归属测试共用同一个 sender 对象（引用相等）
+  const mainSender = fakeSender()
+
+  const created = manager.create(mainSender, request(), goodCwd, true)
   check(
     '信任通过后可以创建会话',
     typeof created.sessionId === 'string' && created.sessionId.length > 0 && typeof created.shell === 'string',
@@ -156,18 +160,33 @@ async function main(): void {
   check('会话记入活动列表', manager.activeCount === 1, `活动会话=${manager.activeCount}`)
   check('启动目录落在传入值上', created.cwd === goodCwd, created.cwd)
 
-  const nested = manager.create(fakeSender(), request({ relativePath: 'sub' }), subCwd, true)
+  const nested = manager.create(mainSender, request({ relativePath: 'sub' }), subCwd, true)
   check('子目录可作为启动目录', nested.cwd === subCwd, nested.cwd)
 
-  manager.write({ sessionId: created.sessionId, data: '' })
+  manager.write(mainSender, { sessionId: created.sessionId, data: '' })
   check('会话可写入（不抛错）', true, '空写入即视为可寻址')
 
-  manager.dispose(created.sessionId)
-  manager.dispose(nested.sessionId)
+  manager.dispose(mainSender, created.sessionId)
+  manager.dispose(mainSender, nested.sessionId)
   check('dispose 后活动会话归零', manager.activeCount === 0, `活动会话=${manager.activeCount}`)
 
-  manager.dispose(created.sessionId)
+  manager.dispose(mainSender, created.sessionId)
   check('重复 dispose 不抛错', manager.activeCount === 0, `活动会话=${manager.activeCount}`)
+
+  /* ---------- 会话归属：write/dispose 校验 sender ---------- */
+
+  const ownerSender = fakeSender()
+  const owned = manager.create(ownerSender, request(), goodCwd, true)
+  const otherSender = fakeSender()
+
+  manager.write(otherSender, { sessionId: owned.sessionId, data: 'should-not-reach' })
+  check('非属主 sender 的写入被静默拒绝（不抛错）', manager.activeCount === 1, `活动会话=${manager.activeCount}`)
+
+  manager.dispose(otherSender, owned.sessionId)
+  check('非属主 sender 的 dispose 被静默拒绝', manager.activeCount === 1, `活动会话=${manager.activeCount}`)
+
+  manager.dispose(ownerSender, owned.sessionId)
+  check('属主 sender 的 dispose 正常生效', manager.activeCount === 0, `活动会话=${manager.activeCount}`)
 
   /* ---------- 输出 ---------- */
 
