@@ -125,8 +125,16 @@ function isPrivateHost(host: string): boolean {
   if (host.length === 0) return true
   if (host === 'localhost' || host.endsWith('.localhost')) return true
   if (host.endsWith('.local') || host.endsWith('.internal')) return true
-  if (host === '::1' || host === '0:0:0:0:0:0:0:1' || host.startsWith('fc') || host.startsWith('fd')) return true
-  if (host.startsWith('fe80')) return true
+
+  // IPv6 前缀判断只对含冒号的 host 生效。域名如 fcbarcelona.com、fdic.gov
+  // 不含冒号，不能被 fc/fd 前缀误判为内网地址。
+  if (host.includes(':')) {
+    if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true
+    if (host.startsWith('fc') || host.startsWith('fd')) return true
+    if (host.startsWith('fe80')) return true
+    // 含冒号却识别不了的 IPv6 形态一律按不可信对待
+    return true
+  }
 
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
     const parts = host.split('.').map((part) => Number(part))
@@ -140,8 +148,8 @@ function isPrivateHost(host: string): boolean {
     return false
   }
 
-  // 其余 IPv6 私有形态已按前缀处理；含冒号却识别不了的一律按不可信对待
-  return isIpLiteral(host)
+  // 非常规 IPv4 且不含冒号：正常域名，放行
+  return false
 }
 
 /** 生产域名解析器：解析为全部 A/AAAA 地址。验证脚本经 `deps.dnsLookup` 注入替代。 */
