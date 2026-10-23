@@ -55,10 +55,23 @@ function findExecutable() {
   return path.join(UNPACKED, candidates[0].name)
 }
 
-/** 预置登记数据，让界面有可操作的项目（主进程惰性读取该文件）。 */
+/**
+ * 预置登记数据，让界面有可操作的项目（主进程惰性读取该文件）。
+ *
+ * 项目以**已信任**状态预置，且必须同时写入 `rootIdentity`（目录物理身份
+ * `dev + ino`）：信任授予自 2026-10-22 起是独立特权通道（`project:trust`，
+ * 授予时主进程弹原生确认框），CDP 驱动下无人能点掉原生框，无法在验证流程内
+ * 完成授信；而主进程对写操作与终端一律按登记表的 `trusted` 复核（纵深防御），
+ * 旧记录缺少身份绑定时还会被降级——因此预置「已信任」的同时必须绑定当前目录
+ * 的物理身份，否则终端创建仍会被拒。这样本验证覆盖的是「登记表信任 +
+ * 身份绑定均通过后，主进程放行终端创建」这条生产路径。
+ */
 function seedUserData(userDataDir, projectDir) {
   fs.mkdirSync(userDataDir, { recursive: true })
   const file = path.join(userDataDir, 'projects.json')
+  // 与主进程 captureRootIdentity 同一口径：BigInt 读取避免 64 位文件索引丢精度
+  const stats = fs.statSync(projectDir, { bigint: true })
+  const rootIdentity = stats.ino === 0n ? null : `${stats.dev}:${stats.ino}`
   fs.writeFileSync(
     file,
     JSON.stringify({
@@ -74,7 +87,8 @@ function seedUserData(userDataDir, projectDir) {
             readmePath: null,
             pinned: false,
             lastOpenedAt: new Date().toISOString(),
-            trusted: false,
+            trusted: true,
+            rootIdentity,
             isGitRepository: false
           }
         ]
@@ -289,9 +303,10 @@ async function main() {
     check('打包后可打开项目并列出文件', opened && treeRows > 0, `点击打开=${opened} 文件树行数=${treeRows}`)
 
     // 终端：验证被裁剪过的 node-pty 在打包产物中确实可用。
-    // 先授信——终端创建在主进程按登记表的 trusted 复核（纵深防御），
-    // 这一版打包验证顺带覆盖「授信后可建会话」。
-    await evaluate(cdp, `window.workbench.project.update({ projectId: 'verify-project', trusted: true })`)
+    // 信任走预置登记数据（已信任 + 绑定的目录物理身份，见 seedUserData）——
+    // 授予信任是独立特权通道，会弹主进程原生确认框，CDP 驱动下无法代为确认；
+    // 主进程仍按登记表的 trusted 与身份绑定复核（纵深防御），本项覆盖的是
+    // 「信任与身份均通过后放行终端创建」的生产路径。
     const terminal = await evaluate(
       cdp,
       `(async () => {
