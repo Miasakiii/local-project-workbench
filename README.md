@@ -90,10 +90,10 @@ npm run pack:win
 
 ```bash
 # 静默安装：/S 静默，/D 指定绝对路径（路径不能带引号）
-release/local-project-workbench-0.2.0-setup.exe /S /D=C:\Apps\local-project-workbench
+release/local-project-workbench-0.3.0-setup.exe /S /D=C:\Apps\local-project-workbench
 ```
 
-仓库尚未在 GitHub Releases 发布安装包；推送 `v<version>` 标签会触发 [release.yml](.github/workflows/release.yml) 自动验证、打包、生成 `SHA256SUMS.txt` 并创建 Release。未配置签名证书时产物为未签名安装包，Windows SmartScreen 可能提示。
+发布由推送 `v<version>` 标签触发 [release.yml](.github/workflows/release.yml)：自动验证、打包、生成 `SHA256SUMS.txt` 并创建 Release。未配置签名证书时产物为未签名安装包，Windows SmartScreen 可能提示。
 
 ### 首次使用
 
@@ -162,7 +162,7 @@ release/local-project-workbench-0.2.0-setup.exe /S /D=C:\Apps\local-project-work
 ├─ scripts/                验证脚本、打包辅助、文件体积守卫与 TS 加载钩子（不参与打包）
 ├─ tests/unit/             Node 内置测试运行器的单元用例（纯函数与本地存储，不导入 Electron）
 ├─ docs/
-│  └─ design/              产品设计讨论稿（Markdown 基线，v0.1–v0.4）
+│  └─ design/              产品设计讨论稿与界面终端重构稿（v0.1–v0.5）
 ├─ build/                  Electron 裁剪运行时（由 prepare-electron-dist 生成）
 ├─ out/                    构建产物（已被 .gitignore 忽略）
 └─ release/                打包产物（已被 .gitignore 忽略）
@@ -192,7 +192,7 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 
 ## 项目状态
 
-版本 **0.2.0**。M0–M3 全部里程碑与 10 项验收场景已交付；**19 个集成验证套件 + 99 个单元用例 + 2 项性能实测、750 项集成断言全绿**，单元测试覆盖率实测 **91.49% 行 / 85.42% 分支 / 88.51% 函数**；P5 发布验收已完成：真实 ACL 拒绝删除 4/4、NVIDIA RTX 4060 硬件路径与 SwiftShader 软件路径各复验打包产物 12/12、隔离身份静默安装／卸载与 61 个用户数据文件哈希比对通过、解包 328.3 MB ≤ 340 MB、安装包 100.5 MB ≤ 110 MB；安装包、主程序与 `elevate.exe` 均为 `NotSigned`，未配置证书时 SmartScreen 会提示风险；界面重构三项（文件栏右键化 / 侧边栏设置入口 / 终端主角化）与 P4 终端专项改造（会话状态机、搜索、终端设置持久化、视图变化不终止会话）已落地，并有真实 Windows ConPTY 验收；0.2.0 完成安全加固（信任独立特权通道、终端会话归属、写路径物理身份快照、CSP 按环境拆分）、工程治理（单元测试与覆盖率门槛、发布产物命名、Release workflow、体积门禁）与同时打开项目上限，详见 [CHANGELOG](CHANGELOG.md)。
+版本 **0.3.0**。M0–M3 全部里程碑与 10 项验收场景已交付；**19 个集成验证套件 + 101 个单元用例 + 2 项性能实测、752 项集成断言全绿**，单元测试覆盖率实测 **91.60% 行 / 85.57% 分支 / 88.64% 函数**；P5 发布验收已完成：真实 ACL 拒绝删除 4/4、NVIDIA RTX 4060 硬件路径与 SwiftShader 软件路径各复验打包产物 12/12、隔离身份静默安装／卸载与 61 个用户数据文件哈希比对通过、解包 328.4 MB ≤ 340 MB、安装包 100.5 MB ≤ 110 MB；安装包、主程序与 `elevate.exe` 均为 `NotSigned`，未配置证书时 SmartScreen 会提示风险；界面重构三项（文件栏右键化 / 侧边栏设置入口 / 终端主角化）与 P4 终端专项改造（会话状态机、搜索、终端设置持久化、视图变化不终止会话）已落地，并有真实 Windows ConPTY 验收；0.3.0 在 P4/P5 基础上修复了 Git 重命名原路径越界、Windows 编辑器类型限制与终端早到事件回放；同时包含安全加固（信任独立特权通道、终端会话归属、写路径物理身份快照、CSP 按环境拆分）、工程治理（单元测试与覆盖率门槛、发布产物命名、Release workflow、体积门禁）与同时打开项目上限，详见 [CHANGELOG](CHANGELOG.md)。
 
 已知限制（如实登记，不冒充已解决）：
 
@@ -200,7 +200,7 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 - `dxcompiler.dll` / `dxil.dll` 与 SwiftShader/Vulkan 运行时约 32 MB 仍保留：P5 已在 RTX 4060（D3D11）与 SwiftShader 两条路径验证打包产物 12/12，但「硬件路径正常」不能证明这些 DLL 永远不会被加载；裁剪前仍需逐项静态核查加载清单。
 - 终端渲染优先使用 WebGL；无 WebGL 的环境回退 DOM 渲染器，ANSI 颜色与搜索高亮会降级（输入输出不受影响）。硬件与软件渲染路径已在 P5 对照验证，终端画布均正常创建。
 - **未签名分发**：当前安装包、主程序与 `elevate.exe` 均为 `NotSigned`；未配置 `CSC_LINK` / `CSC_KEY_PASSWORD` 时 Windows SmartScreen 会提示未知发布者。公开分发前需配置代码签名证书。
-- **界面仅简体中文**，尚未接入 i18n；未接入自动更新（`publish: null`）与崩溃上报。公开分发前需另行决策，不在 0.2.0 内冒充已支持。
+- **界面仅简体中文**，尚未接入 i18n；未接入自动更新（`publish: null`）与崩溃上报。公开分发前需另行决策，不冒充已支持。
 
 ---
 
@@ -247,11 +247,12 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 
 ## 设计文档
 
-设计讨论稿按版本递进，**v0.4 为当前基线**（M0–M2 的实施偏差已回写其中）：
+设计讨论稿按版本递进，**v0.4 为产品需求基线，v0.5 为当前界面与终端实施基线**：
 
 | 文档 | 内容 |
 |---|---|
-| [设计讨论稿 v0.4](docs/design/本地项目管理器-设计讨论稿-v0.4.md) | **当前基线。** 回写 M0–M2 的实施偏差：页面结构（侧边栏改为项目切换器）、新增交互与尺寸约定、视觉风格、D1 复核结论、验收场景状态 |
+| [界面与终端重构设计 v0.5](docs/design/本地项目管理器-界面与终端重构设计-v0.5.md) | **当前实施基线。** P0–P5 的执行顺序、终端交互与设置、验证和发布门；各阶段均有验证证据 |
+| [设计讨论稿 v0.4](docs/design/本地项目管理器-设计讨论稿-v0.4.md) | **产品需求基线。** 回写 M0–M2 的实施偏差：页面结构（侧边栏改为项目切换器）、新增交互与尺寸约定、视觉风格、D1 复核结论、验收场景状态 |
 | [设计讨论稿 v0.3](docs/design/本地项目管理器-设计讨论稿-v0.3.md) | 关闭全部五项决策门；含实现约束表与 10 项验收场景 |
 | [设计讨论稿 v0.2](docs/design/本地项目管理器-设计讨论稿-v0.2.md) | 关闭「普通目录可登记」决策（C08） |
 | [设计讨论稿 v0.1](docs/design/本地项目管理器-设计讨论稿-v0.1.md) | 初稿 |
@@ -261,7 +262,7 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 ---
 
 <details>
-<summary>验证体系：19 个集成套件 + 单元测试层 + 2 项性能实测 / 750 项集成断言 + 99 个单元用例</summary>
+<summary>验证体系：19 个集成套件 + 单元测试层 + 2 项性能实测 / 752 项集成断言 + 101 个单元用例</summary>
 
 ```bash
 npm run verify:all          # 静态检查 + 体积守卫 + 类型检查 + 构建 + 单元测试 + 全部集成套件 + 端到端（推荐）
@@ -274,15 +275,15 @@ npm run capture:ui          # 重建并复跑端到端，生成 docs/design/ui-b
 
 | 命令 | 覆盖 | 项数 |
 |---|---|---|
-| `npm run test:unit` | Node 内置测试运行器：路径守卫、入口名称、Git porcelain 与差异解析、Markdown 净化结构性不变量、偏好判定、Shell 白名单、错误分类、JSON 原子存储、写路径身份快照、终端外观与偏好（字号归一化与存储容错、字体栈含中文回退、主题对比度门槛、状态机与搜索文案、偏好迁移与逐项回退） | 99 个用例 |
-| `npm run test:coverage` | 单元测试 + 纯函数覆盖率门槛（行 70 / 分支 55 / 函数 70；实测 91.49 / 85.42 / 88.51） | — |
+| `npm run test:unit` | Node 内置测试运行器：路径守卫、入口名称、Git porcelain 与差异解析、Markdown 净化结构性不变量、偏好判定、Windows 编辑器类型、Shell 白名单、错误分类、JSON 原子存储、写路径身份快照、终端外观与偏好（字号归一化与存储容错、字体栈含中文回退、主题对比度门槛、状态机与搜索文案、早到事件回放、偏好迁移与逐项回退） | 101 个用例 |
+| `npm run test:coverage` | 单元测试 + 纯函数覆盖率门槛（行 70 / 分支 55 / 函数 70；实测 91.60 / 85.57 / 88.64） | — |
 | `npm run verify:m0-4` | Markdown 隔离（脚本、外链、路径穿越、目录联接、链接可键盘聚焦） | 82 |
 | `npm run verify:m0-5` | 删除语义与失败处理（注入回收站能力） | 37 |
 | `npm run verify:m0-5:trash` | 真实系统回收站（Electron 主进程） | 8 |
 | `npm run verify:acl-real` | 真实 Windows ACL 拒绝删除（生产删除路径报告 `permission-denied`、拒绝计入失败且不调用回收站、恢复 ACL 后可正常回收） | 4 |
 | `npm run verify:m0-6` | Git 解析 + 真实仓库集成（含仓库根解析） | 9 + 9 |
 | `npm run verify:m1` | 登记、去重、视图状态（含终端面板可见性持久化）、文件浏览与预览（目录联接按目录列举、超大文本前缀截断、UTF-16LE/BE BOM 识别）、网络图片授权的登记侧 | 69 |
-| `npm run verify:m2-diff` | 差异解析与真实仓库（含只读性断言、hunk 内 `--- `/`+++ ` 内容行与文件头的区分） | 36 |
+| `npm run verify:m2-diff` | 差异解析与真实仓库（含只读性断言、hunk 内 `--- `/`+++ ` 内容行与文件头的区分、重命名原路径不得越过项目根） | 37 |
 | `npm run verify:m2-degrade` | 失败降级与监听过滤规则 | 30 |
 | `npm run verify:m3-1` | 同一父目录内单点重命名（文件／文件夹、冲突、信任、重解析点、归一化后的受保护项） | 22 |
 | `npm run verify:m3-file-ops` | 新建、复制／剪切粘贴、删除、回收站降级、批量失败报告与 `.git` 归一化写法；**执行前竞态注入**（身份快照拒绝同名异文件替换、抢占目标、父目录换成联接、删除目标被换、5ms 宽窗口）与守卫开销实测 | 59 |
@@ -291,14 +292,14 @@ npm run capture:ui          # 重建并复跑端到端，生成 docs/design/ui-b
 | `npm run verify:remote-image` | 网络图片授权与主进程代理：授权门、地址形态、本机／内网、连接前解析复核、**固定连接 IP**、**手动逐跳重定向**、响应类型与体积、魔数嗅探、**真实传输契约**（本地服务器驱动生产实现：固定 IP lookup 全流程、请求已发送、状态/头/字节回传、超时可读说明） | 63 |
 | `npm run smoke:m1` | 端到端（真实 Electron + 构建产物 + 界面交互，含右键菜单驱动文件操作与 Esc 还焦点、Shift+F10 等价键、设置页与终端偏好持久化、重新定位、退出确认、三阶段启动位置、网络图片开关、文件树键盘导航、提示条键盘关闭、模态聚焦、tabpanel 关联、终端主按钮／Ctrl+\`／全屏／自动展开、会话状态与关闭/结束确认、真实 ConPTY 输入与搜索导航、字号缩放、面板拖拽、页面/项目切换会话保持、最小窗口布局） | 157 + 8 + 5 |
 | `npm run verify:g5-shell` | 终端 shell 白名单映射与回退（win32/$SHELL、缺省探测） | 9 |
-| `npm run verify:g3b-editor` | 编辑器路径持久化、清空与缺省回退（不破坏其它偏好） | 6 |
+| `npm run verify:g3b-editor` | 编辑器路径持久化、清空与缺省回退，Windows 拒绝无法直接启动的 `.bat/.cmd`（不破坏其它偏好） | 7 |
 | `npm run verify:r9-native-guard` | 写路径原生守卫加载器契约（缺席即回退、可重复稳定、包名/契约就绪） | 4 |
 | `npm run verify:terminal-trust` | 终端创建的主进程信任复核（纵深防御）：未信任一律拒绝且不建进程、非布尔按未信任、判定顺序、信任通过后原有复核与主路径不受影响；**会话归属**（write/dispose 校验 sender 与创建会话的 sender 一致） | 24 |
 | `npm run verify:fuzz-security` | 安全敏感组件 fuzz／property-based 测试：路径守卫（28 个攻击向量 + 500 次随机 fuzz + `..foo` 不误判）、Markdown 净化层（43 个 XSS 向量 + 500 次随机 fuzz + 结构性不变量）与解析器资源边界（4 万未闭合方括号预算、深层引用限深、代码跨度不干扰链接配对） | 10 |
 | `npm run measure:m0-7` | 冷启动、内存与体积实测 | — |
 | `npm run measure:g9` | G9 性能造数实测（100 项目 / 1,000 项，主进程数据口径） | — |
 
-**合计 750 项集成断言 + 99 个单元用例。** 端到端套件在真实 Electron 中加载 `out/` 构建产物，通过渲染进程实际调用 IPC 并驱动界面交互，并断言计算后的样式以防「样式表未生效」类回归。
+**合计 752 项集成断言 + 101 个单元用例。** 端到端套件在真实 Electron 中加载 `out/` 构建产物，通过渲染进程实际调用 IPC 并驱动界面交互，并断言计算后的样式以防「样式表未生效」类回归。
 
 **说明：**
 
@@ -348,7 +349,7 @@ npm run check        # 静态检查 + 格式化 + 导入顺序（最严格口径
 | Electron 语言包 | 49 MB（55 个） | 1.1 MB（2 个） | 界面为简体中文，保留 zh-CN / en-US |
 | 已被 Vite 打包的前端依赖 | 17 MB | 0 | react / react-dom / xterm 已进 `out/renderer`，故移至 devDependencies |
 
-**实测结果：解包 328.3 MB、NSIS 安装包 100.5 MB**（未裁剪时的投影值为 398.9 MB；解包为 2026-10-25 P5 最终验证实测，安装包为 0.2.0 `pack:win` 实测，Electron 44.9.3）。
+**实测结果：解包 328.4 MB、NSIS 安装包 100.5 MB**（未裁剪时的投影值为 398.9 MB；均为 0.3.0 于 2026-10-25 的最终验证实测，Electron 44.9.3）。
 
 体积构成（实测）：
 
@@ -389,9 +390,9 @@ npm run pack:win         # 生成 NSIS 安装包（≤ 110 MB 体积门槛，实
 
 **打包产物的验证方式：** `verify:packaged` 用远程调试协议（CDP）从外部驱动打包后的应用，不依赖应用内部任何测试钩子，因此能覆盖只有打包才会暴露的问题。当前 **12 项**全部通过：启动并渲染、预加载白名单桥可用、沙箱完整（无 `require` / `process` / `ipcRenderer`）、渲染进程可创建 WebGL 上下文、样式表从 asar 加载、项目库与文件树可用、**裁剪后的 node-pty 确实可用**（实际拉起交互式 shell 并收到输出）、**终端在打包产物中挂载并运行**、**终端渲染后端与 WebGL 能力一致**（WebGL 可用时 xterm 创建画布）、中文文案正常、无致命错误输出。派生应用时会显式清除 `ELECTRON_RUN_AS_NODE`（该变量会让 Electron 退化为纯 Node 并拒绝 Chromium 参数）；设 `VERIFY_PACKAGED_GL_FLAGS="--use-angle=swiftshader"` 可显式指定软件渲染后端复测（默认不传，行为不变）。
 
-**安装与卸载**（P5 实测；per-user 安装、`oneClick: false`、可改安装目录）：以隔离身份（独立 appId 与快捷方式）静默安装到临时目录，退出码 0，`app.asar`／node-pty 原生产物／locales 等顶层条目齐全，桌面与开始菜单快捷方式指向安装目录内主程序；在安装目录上跑 `verify:packaged` **12/12**。`/S /currentuser` 静默卸载退出码 0，安装目录、测试快捷方式与测试注册表项全部清除；用户数据目录（`%APPDATA%\local-project-workbench`）**保留**（`deleteAppDataOnUninstall: false` 生效）——卸载前后 61 个文件、8,286,887 字节逐一 SHA-256 比对 **0 差异**，标记文件保留。真实安装 `F:\sud\local-project-workbench` 未受影响。
+**安装与卸载**（per-user 安装、`oneClick: false`、可改安装目录）：P5 以隔离身份（独立 appId 与快捷方式）静默安装到临时目录，退出码 0，安装目录产物齐全、快捷方式指向正确，安装后 `verify:packaged` **12/12**；`/S /currentuser` 静默卸载退出码 0，安装目录、测试快捷方式与测试注册表项全部清除，用户数据目录（`%APPDATA%\local-project-workbench`）保留。0.3.0 已覆盖安装本机 `F:\sud\local-project-workbench`：安装版本为 0.3.0，主程序 SHA-256 与发布构建一致，安装后产物验证 **12/12**；安装前后用户数据均为 61 个文件、8,286,887 字节，聚合 SHA-256 **0 差异**。
 
-**发布与签名：** 推送 `v<version>` 标签触发 `.github/workflows/release.yml`：先运行 `verify:all`，再 `pack:win`，校验标签与 `package.json` 版本一致，生成 `release/SHA256SUMS.txt`，最后用 `gh release create` 创建 GitHub Release。代码签名通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 仓库 secrets 启用；未配置时产物未签名。P5 实测安装包、主程序与 `elevate.exe` 均为 `NotSigned`（SHA-256：安装包 `9DD87953F90C644C393FDC32745F8619B347131E09F4BE6DF1CBCA85E89A20F8`，主程序 `6E8D0DA70C60E2AAB252DFDE3D2945A3ABBDF6F01B0990A3BB32D8F9065F3940`，`elevate.exe` `9B1FBF0C11C520AE714AF8AA9AF12CFD48503EEDECD7398D8992EE94D1B4DC37`），Windows SmartScreen 会提示未知发布者；对外分发前需配置证书。当前未接入 electron-updater，`publish: null` + `--publish never` 不生成也不上传 `latest.yml` / `app-update.yml`；接入自动更新时再改 GitHub provider，并保持 ASCII `artifactName`。
+**发布与签名：** 推送 `v<version>` 标签触发 `.github/workflows/release.yml`：先运行 `verify:all`，再 `pack:win`，校验标签与 `package.json` 版本一致，生成 `release/SHA256SUMS.txt`，最后用 `gh release create` 创建 GitHub Release。代码签名通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 仓库 secrets 启用；未配置时产物未签名。0.3.0 实测安装包、主程序与 `elevate.exe` 均为 `NotSigned`（SHA-256：安装包 `19C9D0C798D4954BA635C5D45E1EB6C317CC1199A91E4C2464EDE1E475B799E8`，主程序 `8C52844A28CAA006E5AF89E3A0E04764C4B1D73C0DEE2516A54A6A1F9EBE9911`，`elevate.exe` `9B1FBF0C11C520AE714AF8AA9AF12CFD48503EEDECD7398D8992EE94D1B4DC37`），Windows SmartScreen 会提示未知发布者；对外分发前需配置证书。当前未接入 electron-updater，`publish: null` + `--publish never` 不生成也不上传 `latest.yml` / `app-update.yml`；接入自动更新时再改 GitHub provider，并保持 ASCII `artifactName`。
 
 **应用图标**：安装包、任务栏、窗口标题栏与资源管理器图标由 `scripts/build-icon.mjs` 程序化生成（`build/icon.ico`，解析几何 + 4×4 超采样抗锯齿，256/48/32/16 四个尺寸，RGBA）。`pack:dir`／`pack:win` 会先跑 `node scripts/build-icon.mjs` 再交给 electron-builder（`win.icon: build/icon.ico`）；也可单独执行 `npm run build:icon` 预览。构图是 **45° 切角方底**（品牌蓝渐变，切角处透明）+ 白窗（标题栏三钮）+ 终端提示符 `>_`。**换设计师稿时直接替换 `build/icon.ico` 即可**，脚本与 `electron-builder.yml` 的指向不变。
 

@@ -1,6 +1,6 @@
 {
   "name": "local-project-workbench",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "本地项目工作台 — 让每个本地项目拥有一个可阅读、可操作、可继续工作的首页",
   "author": "miasakii",
