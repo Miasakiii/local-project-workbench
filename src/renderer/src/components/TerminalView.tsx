@@ -1,6 +1,20 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { useEffect, useRef } from 'react'
+import {
+  type FontSizeStorage,
+  TERMINAL_FONT_FAMILY,
+  TERMINAL_FONT_SIZE_EVENT,
+  TERMINAL_LETTER_SPACING,
+  TERMINAL_LINE_HEIGHT,
+  TERMINAL_MIN_CONTRAST_RATIO,
+  TERMINAL_SCROLLBACK,
+  TERMINAL_THEME,
+  clampTerminalFontSize,
+  readTerminalFontSize,
+  stepTerminalFontSize,
+  writeTerminalFontSize
+} from './terminal-appearance'
 import '@xterm/xterm/css/xterm.css'
 
 interface TerminalViewProps {
@@ -15,6 +29,15 @@ interface TerminalViewProps {
   shell?: string
 }
 
+/** 字号偏好存本地存储；隐私模式或存储被禁用时访问会抛异常，此时只有本次会话生效。 */
+function resolveFontSizeStorage(): FontSizeStorage | null {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
 /**
  * 终端视图。
  *
@@ -23,6 +46,10 @@ interface TerminalViewProps {
  * - 切换项目、页面或收起面板都不终止进程；收起只改变可见性。
  * - 会话属于创建它的项目，本组件不向会话静默发送 cd。
  * - 回滚缓冲由本组件负责（主进程不保留输出内容）。
+ *
+ * 可读性基线集中在 `terminal-appearance`：字体回退链（中文不能掉到宋体）、
+ * 最小对比度（CLI 自己输出的暗灰由 xterm 自动提亮）、字号与行距。
+ * Ctrl+滚轮可临时缩放字号，偏好写本地存储并广播给同窗口的其它终端。
  */
 export function TerminalView({
   projectId,
@@ -54,18 +81,21 @@ export function TerminalView({
     const host = hostRef.current
     if (host === null) return
 
+    const storage = resolveFontSizeStorage()
     const term = new Terminal({
-      fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
-      fontSize: 13,
-      lineHeight: 1.25,
+      fontFamily: TERMINAL_FONT_FAMILY,
+      fontSize: readTerminalFontSize(storage),
+      lineHeight: TERMINAL_LINE_HEIGHT,
+      letterSpacing: TERMINAL_LETTER_SPACING,
+      fontWeight: '400',
+      fontWeightBold: '600',
+      minimumContrastRatio: TERMINAL_MIN_CONTRAST_RATIO,
       cursorBlink: true,
-      scrollback: 2000,
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      scrollback: TERMINAL_SCROLLBACK,
       convertEol: true,
-      theme: {
-        background: '#1b1f23',
-        foreground: '#e6e6e6',
-        cursor: '#e6e6e6'
-      }
+      theme: TERMINAL_THEME
     })
 
     const fit = new FitAddon()
@@ -74,6 +104,7 @@ export function TerminalView({
 
     let sessionId: string | null = null
     let disposed = false
+    let fontSizeTimer = 0
 
     /** 面板不可见时宿主尺寸为 0，此时不调整尺寸，避免把会话压成 1 行 */
     const fitIfVisible = (): void => {
@@ -99,6 +130,45 @@ export function TerminalView({
         fitIfVisible()
       }, 60)
     }
+
+    const currentFontSize = (): number => clampTerminalFontSize(term.options.fontSize)
+
+    /**
+     * 应用字号并同步 PTY 尺寸。返回是否真的发生了变化。
+     *
+     * xterm 在选项变更后的下一拍才重算 cell 尺寸，立刻 fit 会沿用旧尺寸；
+     * 因此延后一拍校正，避免列宽与 PTY 不一致（长行会错位）。
+     */
+    const applyFontSize = (size: number): boolean => {
+      const next = writeTerminalFontSize(storage, size)
+      if (term.options.fontSize === next) return false
+      term.options.fontSize = next
+      if (fontSizeTimer !== 0) window.clearTimeout(fontSizeTimer)
+      fontSizeTimer = window.setTimeout(() => {
+        fontSizeTimer = 0
+        fitIfVisible()
+      }, 0)
+      return true
+    }
+
+    /** Ctrl+滚轮缩放：与常见终端（VS Code 等）一致，且不劫持普通滚轮滚动。 */
+    const onWheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      const direction: 1 | -1 = event.deltaY < 0 ? 1 : -1
+      if (!applyFontSize(stepTerminalFontSize(currentFontSize(), direction))) return
+      window.dispatchEvent(new CustomEvent(TERMINAL_FONT_SIZE_EVENT, { detail: currentFontSize() }))
+    }
+
+    /** 同窗口其它标签缩放后一并跟随，避免切标签时字号忽大忽小。 */
+    const onExternalFontSize = (event: Event): void => {
+      const detail = (event as CustomEvent<unknown>).detail
+      if (typeof detail !== 'number') return
+      applyFontSize(detail)
+    }
+
+    host.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener(TERMINAL_FONT_SIZE_EVENT, onExternalFontSize)
 
     const offData = window.workbench.terminal.onData((payload) => {
       if (payload.sessionId === sessionId) term.write(payload.data)
@@ -138,6 +208,9 @@ export function TerminalView({
     return () => {
       disposed = true
       window.clearTimeout(fitTimer)
+      window.clearTimeout(fontSizeTimer)
+      host.removeEventListener('wheel', onWheel)
+      window.removeEventListener(TERMINAL_FONT_SIZE_EVENT, onExternalFontSize)
       resizeObserver.disconnect()
       inputDisposable.dispose()
       offData()

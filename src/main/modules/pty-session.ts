@@ -53,6 +53,12 @@ function buildEnv(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === 'string') env[key] = value
   }
+  // 终端类型与颜色能力：node-pty 的 name 选项在 Windows（ConPTY）上不会写入 TERM，
+  // Electron 主进程自身也没有这两项。缺省时 chalk／supports-color 只按 16 色输出，
+  // Claude Code 这类 CLI 会把「次要文本」压到 brightBlack，深色背景上几乎不可读；
+  // 声明 256 色 + 真彩色后它们改用真彩色灰阶，配合终端的 minimumContrastRatio 才可读。
+  env['TERM'] = 'xterm-256color'
+  env['COLORTERM'] = 'truecolor'
   return env
 }
 
