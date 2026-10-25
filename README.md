@@ -2,7 +2,7 @@
 
 > 让每个本地项目拥有一个可阅读、可操作、可继续工作的首页。
 
-**Windows 10 / 11 · Electron 44.4.1 + React 19 + TypeScript · MIT 许可证**
+**Windows 10 / 11 · Electron 44.9.3 + React 19 + TypeScript · MIT 许可证**
 
 一个跑在 Windows 上的本地项目工作台：把**资源管理器式的文件操作**、**GitHub 式仓库首页**和**项目专属终端**合进同一个入口，用于登记、浏览和继续本地项目。
 
@@ -40,6 +40,8 @@
 ### 内置真实终端
 
 - **node-pty 真交互式 shell**（N-API 模块，无需针对 Electron 重新构建）；**多标签独立会话**，切换标签或收起面板都不终止进程；侧边栏标记哪个项目有终端在运行。
+- **可读性基线**：字体栈是「西文等宽 + 中文回退」两段式（Cascadia Mono／Consolas → 微软雅黑／Noto Sans SC），中文字形不会掉到宋体小字；xterm 的 `minimumContrastRatio: 7`（WCAG AAA）会把 CLI **自己输出的**暗灰（256 色灰阶／真彩色灰）自动提亮到可读——Claude Code 这类工具的次要文本实测低至 1.5:1，纯挑主题色覆盖不到；默认 14px／1.4 行距，**Ctrl+滚轮可缩放字号**（10–24px，偏好写入本地存储并同步到同窗口所有标签），滚动回看 10000 行。
+- **终端声明 256 色 + 真彩色**（PTY 环境注入 `TERM=xterm-256color`、`COLORTERM=truecolor`）：缺省时 Electron 主进程没有这两项，CLI 会退化成 16 色并把次要文本压到 brightBlack，深色背景上几乎不可读。
 - **终端主角化**：头部主按钮 + Ctrl+\` 一键呼出；有会话的项目切回来时面板自动展开（**只揭示既有会话，绝不自动创建**）；可全屏把终端当主视图用；可见性重启后恢复。
 - **默认 Shell 可选** pwsh／PowerShell／cmd（白名单，缺省自动探测）；退出应用时若仍有活动会话，先询问再退出，不静默中断正在运行的命令。
 
@@ -81,14 +83,14 @@ npm run dev
 npm run pack:win
 ```
 
-产物为 `release/本地项目工作台-<版本>-setup.exe`（NSIS，实测约 100 MB），支持无人值守安装与静默卸载：
+产物为 `release/local-project-workbench-<版本>-setup.exe`（NSIS，实测约 100 MB；文件名保持 ASCII，产品名仍是「本地项目工作台」），支持无人值守安装与静默卸载：
 
 ```bash
 # 静默安装：/S 静默，/D 指定绝对路径（路径不能带引号）
-release/本地项目工作台-0.1.0-setup.exe /S /D=C:\Apps\local-project-workbench
+release/local-project-workbench-0.2.0-setup.exe /S /D=C:\Apps\local-project-workbench
 ```
 
-仓库目前**未在 GitHub Releases 发布安装包**，需要的话请自行打包，或先用方式一运行。
+仓库尚未在 GitHub Releases 发布安装包；推送 `v<version>` 标签会触发 [release.yml](.github/workflows/release.yml) 自动验证、打包、生成 `SHA256SUMS.txt` 并创建 Release。未配置签名证书时产物为未签名安装包，Windows SmartScreen 可能提示。
 
 ### 首次使用
 
@@ -155,6 +157,7 @@ release/本地项目工作台-0.1.0-setup.exe /S /D=C:\Apps\local-project-workbe
 │  │                       （顺序即层叠顺序；menu.css 在末端，属覆盖型浮层）
 │  └─ shared/              IPC 契约与数据对象类型
 ├─ scripts/                验证脚本、打包辅助、文件体积守卫与 TS 加载钩子（不参与打包）
+├─ tests/unit/             Node 内置测试运行器的单元用例（纯函数与本地存储，不导入 Electron）
 ├─ docs/
 │  └─ design/              产品设计讨论稿（Markdown 基线，v0.1–v0.4）
 ├─ build/                  Electron 裁剪运行时（由 prepare-electron-dist 生成）
@@ -186,13 +189,14 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 
 ## 项目状态
 
-版本 **0.1.0**。M0–M3 全部里程碑与 10 项验收场景已交付；**18 个验证套件与 2 项性能实测、720 项断言全绿**；真实桌面人工验收与 Windows 分发实测（99.9 MB 安装包，无人值守安装／静默卸载／用户数据保留／安装目录产物验证 9/9）均已完成；界面重构三项（文件栏右键化 / 侧边栏设置入口 / 终端主角化）已落地；安全加固一轮（信任独立特权通道、终端会话归属、写路径物理身份快照、CSP 按环境拆分）与同时打开项目上限已落地，详见 [CHANGELOG](CHANGELOG.md)。
+版本 **0.2.0**。M0–M3 全部里程碑与 10 项验收场景已交付；**18 个集成验证套件 + 78 个单元用例 + 2 项性能实测、720 项集成断言全绿**，单元测试覆盖率实测 **92.36% 行 / 85.75% 分支 / 88.64% 函数**；真实桌面人工验收与 0.1.0 的 Windows 分发实测（99.9 MB 安装包，无人值守安装／静默卸载／用户数据保留／安装目录产物验证 9/9）均已完成；0.2.0 安装包为 100.5 MB，打包产物以 CDP 复验 9/9（本轮未重新执行安装／卸载）；界面重构三项（文件栏右键化 / 侧边栏设置入口 / 终端主角化）已落地；0.2.0 完成安全加固（信任独立特权通道、终端会话归属、写路径物理身份快照、CSP 按环境拆分）、工程治理（单元测试与覆盖率门槛、发布产物命名、Release workflow、体积门禁）与同时打开项目上限，详见 [CHANGELOG](CHANGELOG.md)。
 
 已知限制（如实登记，不冒充已解决）：
 
-- **真实 ACL 拒绝删除**的场景 7 权限分支未在可配置 ACL 的环境补测；失败分类与「不静默覆盖、不降级为永久删除」已有自动化覆盖。
+- **真实 ACL 拒绝删除**的场景 7 权限分支未在可配置 ACL 的环境补测——这是**观测前提缺失**，不是已通过项；失败分类与「不静默覆盖、不降级为永久删除」已有自动化覆盖。
 - **写路径 TOCTOU** 已多重收窄：拒绝经过重解析点的写目标、四类写操作全程同步、解析后采集**物理身份快照**（`dev + ino`；「删除后建同名文件」这类 realpath 复核的盲区必然改变 ino）并在执行前复核、执行后复核源与目标身份（剪切落地的必须就是已验证的同一个文件对象）；守卫开销实测中位约 11 µs。残余段仅剩「执行前复核结束 → 系统调用」之间无法用路径 API 分解的微秒级窗口，无法归零（R9）。
 - 安装包含 GPU／DirectX 相关 DLL 约 32 MB 未裁剪（无真实 GPU 环境可验证其必要性）；若能接受，需在真实 GPU 机器上另行确认后再裁。
+- **界面仅简体中文**，尚未接入 i18n；未接入自动更新（`publish: null`）与崩溃上报。公开分发前需另行决策，不在 0.2.0 内冒充已支持。
 
 ---
 
@@ -253,18 +257,20 @@ D1 复核（2026-09-18，依据 M0-7 实测）维持 Electron：
 ---
 
 <details>
-<summary>验证体系：18 个验证套件 + 2 项性能实测 / 720 项断言</summary>
+<summary>验证体系：18 个集成套件 + 单元测试层 + 2 项性能实测 / 720 项集成断言 + 67 个单元用例</summary>
 
 ```bash
-npm run verify:all          # 静态检查 + 体积守卫 + 类型检查 + 构建 + 全部验证套件 + 端到端（推荐）
+npm run verify:all          # 静态检查 + 体积守卫 + 类型检查 + 构建 + 单元测试 + 全部集成套件 + 端到端（推荐）
 ```
 
-仓库已在 `.github/workflows/ci.yml` 配置 GitHub Actions：push 或 PR 到 `main` 时，在 `windows-latest` 上自动运行完整 `npm run verify:all`（终端套件依赖 Windows ConPTY，故不用 Linux runner）。
+仓库已在 `.github/workflows/ci.yml` 配置 GitHub Actions：push 或 PR 到 `main` 时，在 `windows-latest` 上依次执行 lint、体积守卫、类型检查、构建与 `verify:suites`——等价于完整 `npm run verify:all`，拆成独立步骤便于定位失败；终端套件依赖 Windows ConPTY，故不用 Linux runner。
 
 各套件可单独运行：
 
 | 命令 | 覆盖 | 项数 |
 |---|---|---|
+| `npm run test:unit` | Node 内置测试运行器：路径守卫、入口名称、Git porcelain 与差异解析、Markdown 净化结构性不变量、偏好判定、Shell 白名单、错误分类、JSON 原子存储、写路径身份快照、终端外观（字号归一化与存储容错、字体栈含中文回退、主题对比度门槛） | 78 个用例 |
+| `npm run test:coverage` | 单元测试 + 纯函数覆盖率门槛（行 70 / 分支 55 / 函数 70；实测 92.36 / 85.75 / 88.64） | — |
 | `npm run verify:m0-4` | Markdown 隔离（脚本、外链、路径穿越、目录联接、链接可键盘聚焦） | 82 |
 | `npm run verify:m0-5` | 删除语义与失败处理（注入回收站能力） | 37 |
 | `npm run verify:m0-5:trash` | 真实系统回收站（Electron 主进程） | 8 |
@@ -286,11 +292,12 @@ npm run verify:all          # 静态检查 + 体积守卫 + 类型检查 + 构�
 | `npm run measure:m0-7` | 冷启动、内存与体积实测 | — |
 | `npm run measure:g9` | G9 性能造数实测（100 项目 / 1,000 项，主进程数据口径） | — |
 
-**合计 720 项断言。** 端到端套件在真实 Electron 中加载 `out/` 构建产物，通过渲染进程实际调用 IPC 并驱动界面交互，并断言计算后的样式以防「样式表未生效」类回归。
+**合计 720 项集成断言 + 78 个单元用例。** 端到端套件在真实 Electron 中加载 `out/` 构建产物，通过渲染进程实际调用 IPC 并驱动界面交互，并断言计算后的样式以防「样式表未生效」类回归。
 
 **说明：**
 
-- 主进程模块在纯 Node 下验证需使用 `--experimental-transform-types`（`--experimental-strip-types` 不支持 TypeScript 参数属性）；`scripts/ts-loader/register.mjs` 负责解析 `@shared/*` 别名与省略扩展名的相对导入，只服务验证脚本，不参与打包。
+- 单元测试与集成脚本共用 `scripts/ts-loader/register.mjs`；`tests/unit/` 不导入 Electron，可在纯 Node 下秒级运行。覆盖率门槛只覆盖有完整单元覆盖的纯函数模块；Markdown 净化的结构性不变量由 `verify:fuzz-security` 覆盖，不用低门槛冒充高覆盖。
+- 主进程模块在纯 Node 下验证需使用 `--experimental-transform-types`（`--experimental-strip-types` 不支持 TypeScript 参数属性）；`scripts/ts-loader/register.mjs` 负责解析 `@shared/*` 别名与省略扩展名的相对导入，只服务验证脚本与单元测试，不参与打包。
 - 需要真实 Electron 的脚本采用父/子进程模式：部分环境会注入 `ELECTRON_RUN_AS_NODE=1`，父进程显式清除该变量后再派生 Electron，子进程自检运行模式并明确失败。
 - `smoke:m1` 在运行前断言 `out/` 产物不早于 `src/`：产物陈旧时直接失败，避免「验证通过」实际测到的是旧代码。`verify:all` 已内含构建步骤。
 - 端到端脚本会关闭窗口的后台节流（`setBackgroundThrottling(false)`）：无显示会话的环境里窗口不会被判定为「可见」，Chromium 会据此节流动画与计时器。该设置只作用于验证期间，不改变应用自身的节流策略。
@@ -335,20 +342,20 @@ npm run check        # 静态检查 + 格式化 + 导入顺序（最严格口径
 | Electron 语言包 | 49 MB（55 个） | 1.1 MB（2 个） | 界面为简体中文，保留 zh-CN / en-US |
 | 已被 Vite 打包的前端依赖 | 17 MB | 0 | react / react-dom / xterm 已进 `out/renderer`，故移至 devDependencies |
 
-**实测结果：解包 326.8 MB、NSIS 安装包 99.9 MB**（未裁剪时的投影值为 398.9 MB；数据为 2026-09-23 `pack:win` 实测）。
+**实测结果：解包 328.2 MB、NSIS 安装包 100.5 MB**（未裁剪时的投影值为 398.9 MB；数据为 2026-10-23 `pack:win` 实测，Electron 44.9.3）。
 
 体积构成（实测）：
 
 | 项 | 体积 | 占比 |
 |---|---|---|
-| `本地项目工作台.exe`（Chromium + Node） | 234.9 MB | 71.6% |
+| `本地项目工作台.exe`（Chromium + Node） | 235.4 MB | 71.7% |
 | `dxcompiler.dll` | 24.6 MB | 7.5% |
 | `LICENSES.chromium.html` | 19.5 MB | 6.0% |
 | `resources.pak` | 11.9 MB | 3.6% |
 | `icudtl.dat` | 10.4 MB | 3.2% |
-| `resources/`（app.asar 1.8 MB + 解包的 node-pty 5.6 MB） | 7.5 MB | 2.3% |
+| `resources/`（app.asar 1.8 MB + 解包的 node-pty 5.3 MB） | 7.3 MB | 2.2% |
 | `vk_swiftshader.dll` | 5.3 MB | 1.6% |
-| 其余（d3dcompiler / ffmpeg / dxil / pak / locales） | 11.8 MB | 3.6% |
+| 其余（d3dcompiler / ffmpeg / dxil / pak / locales 等） | 13.8 MB | 4.2% |
 
 **明确保留、不裁剪的项：**
 
@@ -370,13 +377,15 @@ npm run check        # 静态检查 + 格式化 + 导入顺序（最严格口径
 npm run pack:dir         # 打出未压缩安装目录到 release/win-unpacked
 npm run measure:pack     # 测量真实产物体积与构成
 npm run verify:packaged  # 在打包产物上做端到端验证（CDP 驱动）
-npm run verify:release   # 上面三步串起来
-npm run pack:win         # 生成 NSIS 安装包（实测产物约 100 MB）
+npm run verify:release   # pack:dir + 解包体积门槛（≤ 340 MB）+ 打包产物验证
+npm run pack:win         # 生成 NSIS 安装包（≤ 110 MB 体积门槛，实测约 100 MB）
 ```
 
 **打包产物的验证方式：** `verify:packaged` 用远程调试协议（CDP）从外部驱动打包后的应用，不依赖应用内部任何测试钩子，因此能覆盖只有打包才会暴露的问题。当前 9 项全部通过：启动并渲染、预加载白名单桥可用、沙箱完整（无 `require` / `process` / `ipcRenderer`）、样式表从 asar 加载、项目库与文件树可用、**裁剪后的 node-pty 确实可用**（实际拉起交互式 shell 并收到输出）、中文文案正常、无致命错误输出。派生应用时会显式清除 `ELECTRON_RUN_AS_NODE`（该变量会让 Electron 退化为纯 Node 并拒绝 Chromium 参数）；设 `VERIFY_PACKAGED_GL_FLAGS="--use-gl=swiftshader"` 可显式指定软件渲染后端复测（默认不传，行为不变）。
 
-**安装与卸载**（per-user 安装、`oneClick: false`、可改安装目录）也已实测：无人值守安装约 1–2 分钟，完成后顶层条目齐全（`app.asar`／node-pty 原生产物／locales 都在）；静默卸载退出码 0 且安装目录被完整删除，用户数据目录（`%APPDATA%\local-project-workbench`）**保留**（`deleteAppDataOnUninstall: false` 生效）；在真实安装目录上跑 `verify:packaged` 9/9 通过。
+**安装与卸载**（0.1.0 实测；per-user 安装、`oneClick: false`、可改安装目录）：无人值守安装约 1–2 分钟，完成后顶层条目齐全（`app.asar`／node-pty 原生产物／locales 都在）；静默卸载退出码 0 且安装目录被完整删除，用户数据目录（`%APPDATA%\local-project-workbench`）**保留**（`deleteAppDataOnUninstall: false` 生效）；在真实安装目录上跑 `verify:packaged` 9/9 通过。0.2.0 重新打包后在 `release/win-unpacked` 上以 CDP 复验 9/9；安装包本身未在本轮重新执行安装／卸载。
+
+**发布与签名：** 推送 `v<version>` 标签触发 `.github/workflows/release.yml`：先运行 `verify:all`，再 `pack:win`，校验标签与 `package.json` 版本一致，生成 `release/SHA256SUMS.txt`，最后用 `gh release create` 创建 GitHub Release。代码签名通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 仓库 secrets 启用；未配置时产物未签名，Windows SmartScreen 可能提示。当前未接入 electron-updater，`publish: null` + `--publish never` 不生成也不上传 `latest.yml` / `app-update.yml`；接入自动更新时再改 GitHub provider，并保持 ASCII `artifactName`。
 
 **应用图标**：安装包、任务栏、窗口标题栏与资源管理器图标由 `scripts/build-icon.mjs` 程序化生成（`build/icon.ico`，解析几何 + 4×4 超采样抗锯齿，256/48/32/16 四个尺寸，RGBA）。`pack:dir`／`pack:win` 会先跑 `node scripts/build-icon.mjs` 再交给 electron-builder（`win.icon: build/icon.ico`）；也可单独执行 `npm run build:icon` 预览。构图是 **45° 切角方底**（品牌蓝渐变，切角处透明）+ 白窗（标题栏三钮）+ 终端提示符 `>_`。**换设计师稿时直接替换 `build/icon.ico` 即可**，脚本与 `electron-builder.yml` 的指向不变。
 
@@ -387,8 +396,8 @@ npm run pack:win         # 生成 NSIS 安装包（实测产物约 100 MB）
 ## 环境基线
 
 - Windows 10 / 11（目标平台）
-- Node.js 22.x（已验证 22.22.2）
-- Electron 44.4.1（Chromium 152 / Node 24.21.0）
+- Node.js 22.x（已验证 22.22.2；单元测试使用 Node 内置 `node:test`，无第三方测试框架）
+- Electron 44.9.3（Chromium 152.0.7977.167 / Node 24.22.0；`npm run smoke:m1` 的关于页实测）
 - Git 2.55（已验证）
 
 ---
@@ -402,9 +411,13 @@ npm run build:icon  # 生成应用图标 build/icon.ico（打包链已内置此�
 npm run preview     # 预览构建结果
 npm run typecheck   # 主进程与渲染进程类型检查
 
+npm run test:unit           # 单元测试（Node 内置运行器，纯 Node，秒级）
+npm run test:coverage       # 单元测试 + 覆盖率门槛（行 70 / 分支 55 / 函数 70）
+
 npm run check:file-size   # 文件体积守卫：src/ 单文件超过 800 行即失败（可 --limit 调整）
 
-npm run verify:all            # 静态检查 + 体积守卫 + 类型检查 + 构建 + 全部验证套件 + 端到端
+npm run verify:all            # 静态检查 + 体积守卫 + 类型检查 + 构建 + 单元测试 + 全部集成套件 + 端到端
+npm run verify:suites         # 单元测试 + 全部集成套件（CI 使用，不含静态检查/构建）
 npm run verify:m3             # M3 四套（重命名、文件操作、生命周期、启动位置）
 npm run verify:m3-file-ops    # 文件操作与批量失败报告
 npm run verify:m3-startup     # 应用级偏好与「恢复上次项目」
@@ -412,7 +425,7 @@ npm run verify:remote-image   # 网络图片授权与主进程代理
 npm run verify:terminal-trust # 终端创建的主进程信任复核（纵深防御）
 npm run smoke:m1              # 端到端（真实 Electron，需先构建）
 
-npm run pack:win              # 生成 NSIS 安装包（约 100 MB）
+npm run pack:win              # 生成 NSIS 安装包（≤ 110 MB 体积门槛，实测约 100 MB）
 ```
 
 ---

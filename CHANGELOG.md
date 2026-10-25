@@ -21,10 +21,13 @@
 - M0–M3 全部里程碑与 10 项验收场景交付；验证套件覆盖 Markdown 隔离、删除语义、真实回收站、Git 解析与真实仓库、登记去重、差异解析、文件操作与竞态注入、生命周期与启动位置、网络图片授权、终端信任与 shell 白名单等。
 - NSIS 安装包实测 99.9 MB（解包 326.8 MB）；无人值守安装／静默卸载／用户数据保留／安装目录产物验证 9/9 通过。
 
-## [未发布]
+## [0.2.0] - 2026-10-23
+
+安全加固与工程治理版本。产品范围仍为 C01–C10，不新增云同步、账号、代码编辑或 Git 写操作。
 
 ### 安全
 
+- **依赖安全更新**：Electron 44.4.1 → 44.9.3、Vite 7.3.6 → 7.3.7、source-map-js 1.2.1 → 1.2.2、http-cache-semantics 4.2.0 → 4.3.0；`npm audit` 由 4 个漏洞（1 中 3 高）降为 0。Electron 升级后按既有约束复验 node-pty（N-API 模块，与 Electron ABI 无关）与打包产物。
 - **信任改为独立特权通道**（`project:trust`）：授予信任必须经主进程弹原生确认框由用户当面确认，普通元数据更新通道不再接受 `trusted` 字段；撤销信任无需确认（只收紧权限）。
 - **信任绑定目录物理身份**：授予信任时采集根目录 `dev + ino`；目录被同名替换、可移动磁盘更换盘符时真实路径不变而物理身份改变，信任自动降级为只读；旧版本记录缺少身份绑定时不继承信任。
 - **写路径物理身份快照**：解析后采集 `dev + ino`（文件系统不提供稳定索引时退化为 `size + mtimeMs` 复合指纹），执行前复核、执行后复核源与目标身份，堵住「删除后建同名文件」这类 realpath 复核的盲区；实测守卫开销中位约 11 µs。
@@ -42,6 +45,11 @@
 
 ### 变更
 
+- 版本号升至 **0.2.0**；[未发布] 区段整体归档到本版本，不再让安全变更停留在「未发布」状态。
+- 发布产物名改为 ASCII `local-project-workbench-<version>-setup.exe`，产品名仍为「本地项目工作台」。中文产物名会在发布元数据中被改写，导致 `latest.yml` 指向不存在的文件。
+- 显式设置 `publish: null`：当前未接入 electron-updater，不再生成 `latest.yml` / `app-update.yml`；接入自动更新时再改为 GitHub provider。
+- CI 拆分 `verify:suites`（单元测试 + 集成套件），与 `verify:all`（静态检查 + 类型检查 + 构建 + 套件）分工；CI 不再重复执行 lint/typecheck/build。
+- `package.json` 补齐 `repository` / `homepage` / `bugs` / `engines` 元数据。
 - 文件写操作按类型拆分为独立模块（`create-entry` / `delete-entries` / `rename-entry` / `transfer-entries` / `file-op-common`），`file-access.ts` 收为薄出口；行为不变。
 - 大文件预览改为只读取阈值内前缀并标记截断，前缀读取按请求字节数分配。
 - Markdown 行内匹配统一改 sticky 正则并复用，消除每个 `<` 处复制剩余字符串的 O(n²) 行为。
@@ -53,11 +61,40 @@
 - 差异解析：hunk 计数未耗尽时，行首的 `--- `/`+++ ` 是内容行（删除 `--…`、新增 `++…`），不再被误判为文件头。
 - 快速切换文件时，晚到的旧预览响应不再覆盖当前预览（请求代次隔离）。
 - 文件树漫游 tabindex：焦点光标不在当前行内（切换项目后树已刷新）或尚未进入树时，回退到首个可见行，保证始终有且仅有一行可被 Tab 进入。
+- `release/latest.yml` 引用 `local-project-workbench-setup-0.1.0.exe`，实际产物却是中文名安装包：改为 ASCII `artifactName` 并显式 `publish: null`，不再生成会 404 的更新元数据。
+- README 的版本号、安装包路径、验证套件计数与 CHANGELOG 同步；ACL 未补测口径明确为「观测前提缺失」，不冒充已通过。
 
 ### 测试
 
+- 新增 Node 内置测试运行器单元层：`tests/unit/` 10 个文件 / **67 个用例**，覆盖路径守卫、入口名称、Git porcelain 与差异解析、Markdown 净化结构性不变量、偏好判定、Shell 白名单、文件操作错误分类、JSON 原子存储与写路径身份快照。
+- `npm run test:coverage` 对纯函数模块设 70% 行 / 55% 分支 / 70% 函数门槛（实测 91.85% 行 / 85.05% 分支 / 88.10% 函数）；Markdown 净化的结构性不变量仍由 `verify:fuzz-security` 覆盖，不用低门槛冒充高覆盖。
+- `verify:all` 改为静态检查 + 构建 + `verify:suites`；CI 与 release workflow 共用同一套验证链。
 - 文件操作套件新增执行前竞态注入：身份快照拒绝同名异文件替换、抢占目标、父目录换成联接、删除目标被换、5 ms 宽窗口。
 - 生命周期套件新增信任身份绑定断言：同名目录替换降级、旧记录不继承信任、重新授予绑定新身份。
 - 端到端套件「方向键移动焦点」改确定性重试：原固定 sleep 赌 React 提交落盘，负载下偶发「焦点不动」；现在每个回合重新聚焦再按键，提交后的回合必然移动焦点。
 - 验证脚本改用异步派生外部进程（`execFile`／`spawn`）：本类环境对同步派生返回 EBUSY。
 - 打包产物验证支持 `VERIFY_PACKAGED_GL_FLAGS` 显式指定软件渲染后端复测。
+- 安装包体积门槛：解包 ≤ 340 MB、安装包 ≤ 110 MB，分别接入 `verify:release` 与 `pack:win`。
+
+### 分发与发布
+
+- 新增 `.github/workflows/release.yml`：推送 `v*` 标签时校验标签与 `package.json` 版本一致，运行 `verify:all` 与 `pack:win`，生成 `SHA256SUMS.txt` 并创建 GitHub Release。
+- 代码签名通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 仓库 secrets 启用；未配置时产物为未签名安装包，Windows SmartScreen 可能提示。
+- README 同步更新安装包路径、发布流程、验证套件表与已知限制口径。
+
+## [Unreleased]
+
+### 改进
+
+- **终端可读性**（用户反馈「终端可读性很差」）：
+  - 字体栈改为「西文等宽 + 中文回退」两段式（`Cascadia Mono`／`Consolas` → `Microsoft YaHei UI`／`Noto Sans SC`）。原栈只有西文字体，中文一路回退到宋体，13px 下笔画细弱发虚。
+  - xterm 开启 `minimumContrastRatio: 7`（WCAG AAA），自动提亮**前景色**。Claude Code 这类 CLI 的次要文本用 256 色灰阶（如 240）或真彩色灰，在深色背景上实测低至 1.5:1；这类颜色由 CLI 自己输出，挑主题色覆盖不到。
+  - 默认字号 13 → 14px、行高 1.25 → 1.4，字间距 0.2px；补全 16 色 ANSI 主题（亮色系整体提亮，`dim` 文本常用 brightBlack）；滚动回看 2000 → 10000 行。
+  - 终端面板底色与终端主题 background 统一为 `#181a1d`（消除内边距处的色差带），深色滚动条改为浅灰可见。
+- 终端 **Ctrl+滚轮缩放字号**（10–24px，一步一档）：偏好写入本地存储，跨会话保留；同窗口其它标签通过自定义事件同步，切标签不出现字号忽大忽小。
+- PTY 环境注入 `TERM=xterm-256color` 与 `COLORTERM=truecolor`：node-pty 的 `name` 在 Windows/ConPTY 上不写 `TERM`，Electron 主进程也没有这两项，缺省时 CLI 会退化为 16 色。
+
+### 测试
+
+- 单元用例 67 → 78：新增 `tests/unit/terminal-appearance.test.mts`，覆盖字号归一化与存储容错（不可用、非法、超界）、字体栈必须含中文回退、主题 16 色合法性与对比度门槛；覆盖率实测升至 92.36% 行 / 85.75% 分支 / 88.64% 函数。
+- 端到端 `smoke:m1` 复跑 150/150 通过（终端创建、主按钮、全屏、自动展开、退出确认均无回归）。
