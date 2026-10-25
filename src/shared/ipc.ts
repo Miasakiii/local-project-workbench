@@ -175,6 +175,8 @@ export interface StartupViewResult {
   notice: string | null
   /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b），供设置页显示 */
   editorPath: string | null
+  /** 侧栏开合偏好；启动时由主进程校验后交给渲染层（P2-7 迁入） */
+  sidebarOpen: boolean
   /** 终端偏好全集；启动时由主进程校验后交给渲染层 */
   terminal: TerminalPreferences
 }
@@ -182,6 +184,8 @@ export interface StartupViewResult {
 export interface UpdateSettingsRequest {
   /** 「恢复上次项目」开关；缺省表示本次不改动该项 */
   restoreLastProject?: boolean
+  /** 侧栏开合偏好（P2-7 迁入）；缺省表示本次不改动该项 */
+  sidebarOpen?: boolean
   /** 终端偏好的局部更新；主进程逐字段校验，缺省字段保持原值 */
   terminal?: Partial<TerminalPreferences>
 }
@@ -197,6 +201,8 @@ export interface SettingsResult {
   lastProjectId: string | null
   /** 「用指定编辑器打开」所用的编辑器可执行路径；null=尚未设置（设计稿 4.2，G3b） */
   editorPath: string | null
+  /** 侧栏开合偏好；默认展开，经 `sanitizeSidebarPreference` 校验（P2-7 迁入） */
+  sidebarOpen: boolean
   /** 终端偏好；全部字段经 `sanitizeTerminalPreferences` 校验 */
   terminal: TerminalPreferences
 }

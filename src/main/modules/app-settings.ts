@@ -1,5 +1,6 @@
 import { extname } from 'node:path'
 import type { SettingsResult } from '@shared/ipc'
+import { DEFAULT_SIDEBAR_OPEN, sanitizeSidebarPreference } from '@shared/sidebar-settings'
 import {
   DEFAULT_TERMINAL_PREFERENCES,
   mergeTerminalPreferences,
@@ -12,10 +13,11 @@ import { SHELL_CHOICES } from './shell-select'
 /**
  * 应用级偏好（C09 / 验收场景 10「恢复上次项目」）。
  *
- * 承载四件事，且都写在应用数据目录：
+ * 承载五件事，且都写在应用数据目录：
  * - `restoreLastProject`：开关，**默认关闭**；
  * - `lastProjectId`：上次活跃于哪个项目，由主进程在用户打开项目时记录；
  * - `editorPath`：「用指定编辑器打开」所用的编辑器可执行路径（设计稿 4.2，G3b）；
+ * - `sidebarOpen`：侧栏开合偏好，默认展开（P2-7 迁入，原渲染层 localStorage 键一次性迁移至此）；
  * - `terminal`：终端偏好全集（P4），逐字段校验后原子写入。
  *
  * 刻意与 `projects.json` 分开存放：这些是应用属性，不是项目属性。移除登记、
@@ -60,6 +62,7 @@ function sanitizeSettings(raw: unknown): SettingsResult | null {
     restoreLastProject: raw['restoreLastProject'] === true,
     lastProjectId: typeof last === 'string' && last.length > 0 ? last : null,
     editorPath: isSupportedEditorPath(editor) ? editor : null,
+    sidebarOpen: sanitizeSidebarPreference(raw['sidebarOpen']),
     terminal: sanitizeTerminalPreferences(terminalRaw)
   }
 }
@@ -118,13 +121,18 @@ export class AppSettingsStore {
    * `restoreLastProject` 归一为布尔；终端偏好逐字段过 `sanitizeTerminalPreferences`。
    * 渲染层传来的值只是候选，落盘的永远是校验过的值。
    */
-  update(patch: { restoreLastProject?: boolean; terminal?: Partial<TerminalPreferences> }): SettingsResult {
+  update(patch: {
+    restoreLastProject?: boolean
+    sidebarOpen?: boolean
+    terminal?: Partial<TerminalPreferences>
+  }): SettingsResult {
     const current = this.get()
     const next: SettingsResult = {
       ...current,
       terminal: mergeTerminalPreferences(current.terminal, patch.terminal)
     }
     if (patch.restoreLastProject !== undefined) next.restoreLastProject = patch.restoreLastProject === true
+    if (patch.sidebarOpen !== undefined) next.sidebarOpen = patch.sidebarOpen === true
     this.store.write(next)
     return next
   }
@@ -195,6 +203,7 @@ export function createSettingsStore(filePath: string): AppSettingsStore {
         restoreLastProject: false,
         lastProjectId: null,
         editorPath: null,
+        sidebarOpen: DEFAULT_SIDEBAR_OPEN,
         terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
       })
     })

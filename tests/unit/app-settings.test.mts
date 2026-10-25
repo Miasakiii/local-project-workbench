@@ -8,16 +8,18 @@ import {
   createStartupLookup,
   decideStartupView,
   isSupportedEditorPath,
-  sanitizeDefaultShell,
-  type StartupProjectState
+  type StartupProjectState,
+  sanitizeDefaultShell
 } from '../../src/main/modules/app-settings'
-import { DEFAULT_TERMINAL_PREFERENCES } from '../../src/shared/terminal-settings'
 import type { SettingsResult } from '../../src/shared/ipc'
+import { DEFAULT_SIDEBAR_OPEN } from '../../src/shared/sidebar-settings'
+import { DEFAULT_TERMINAL_PREFERENCES } from '../../src/shared/terminal-settings'
 
 const baseSettings: SettingsResult = {
   restoreLastProject: false,
   lastProjectId: null,
   editorPath: null,
+  sidebarOpen: DEFAULT_SIDEBAR_OPEN,
   terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
 }
 
@@ -120,6 +122,71 @@ test('设置持久化写入校验后的终端偏好，未给出的字段保持�
 
   store.setEditorPath('')
   assert.equal(store.get().editorPath, null)
+})
+
+test('侧栏开合经设置通道读写，缺省不改动，重启可恢复', (t) => {
+  const file = withSettingsFile(t)
+  const store = createSettingsStore(file)
+
+  // 全新 settings.json：无该字段，保持默认展开
+  assert.equal(store.get().sidebarOpen, DEFAULT_SIDEBAR_OPEN)
+
+  store.update({ sidebarOpen: false })
+  assert.equal(store.get().sidebarOpen, false)
+  assert.equal(createSettingsStore(file).get().sidebarOpen, false)
+
+  // 缺省（含显式 undefined）表示本次不改动该项
+  store.update({ sidebarOpen: undefined })
+  store.update({ restoreLastProject: true })
+  assert.equal(store.get().sidebarOpen, false)
+  assert.equal(store.get().restoreLastProject, true)
+
+  store.update({ sidebarOpen: true })
+  assert.equal(createSettingsStore(file).get().sidebarOpen, true)
+})
+
+test('旧版 settings.json 无侧栏字段时按默认展开读取', (t) => {
+  const file = withSettingsFile(t)
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      data: {
+        restoreLastProject: false,
+        lastProjectId: null,
+        editorPath: null,
+        terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
+      }
+    }),
+    'utf8'
+  )
+
+  assert.equal(createSettingsStore(file).get().sidebarOpen, DEFAULT_SIDEBAR_OPEN)
+})
+
+test('settings.json 侧栏字段非法时回落为默认展开', (t) => {
+  const file = withSettingsFile(t)
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      data: {
+        restoreLastProject: false,
+        lastProjectId: null,
+        editorPath: null,
+        sidebarOpen: 'false',
+        terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
+      }
+    }),
+    'utf8'
+  )
+
+  const store = createSettingsStore(file)
+  assert.equal(store.get().sidebarOpen, DEFAULT_SIDEBAR_OPEN)
+
+  // 落盘一次合法值后即覆盖掉非法残留
+  store.update({ sidebarOpen: false })
+  assert.equal(createSettingsStore(file).get().sidebarOpen, false)
 })
 
 test('旧版扁平 defaultShell 在升级时迁移到终端偏好', (t) => {

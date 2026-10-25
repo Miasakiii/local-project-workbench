@@ -1,4 +1,9 @@
 import {
+  DEFAULT_SIDEBAR_OPEN,
+  LEGACY_SIDEBAR_PREFERENCE_KEY,
+  parseLegacySidebarPreference
+} from '@shared/sidebar-settings'
+import {
   DEFAULT_TERMINAL_PREFERENCES,
   sanitizeTerminalPreferences,
   type TerminalPreferences
@@ -13,8 +18,6 @@ import { LibraryPage } from './pages/LibraryPage'
 import { ProjectPage } from './pages/ProjectPage'
 import { SettingsPage } from './pages/SettingsPage'
 
-const SIDEBAR_PREFERENCE_KEY = 'workbench.sidebarOpen'
-
 /**
  * 同时打开的项目数上限。
  *
@@ -23,14 +26,6 @@ const SIDEBAR_PREFERENCE_KEY = 'workbench.sidebarOpen'
  * 运行的项目——有会话在跑的项目不会被自动关闭，避免静默中断用户工作。
  */
 const MAX_OPEN_PROJECTS = 8
-
-function readSidebarPreference(): boolean {
-  try {
-    return window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) !== 'false'
-  } catch {
-    return true
-  }
-}
 
 /**
  * 应用入口。
@@ -58,7 +53,10 @@ export default function App(): React.JSX.Element {
   /** 项目最近一次被激活的顺序号：打开上限驱逐时据此找「最久未活动」的项目 */
   const activationOrderRef = useRef(new Map<string, number>())
   const activationTickRef = useRef(0)
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(readSidebarPreference)
+  /** 侧栏开合偏好（P2-7 迁入应用设置）；启动时以主进程落盘值为准，落盘前按默认展开渲染 */
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(DEFAULT_SIDEBAR_OPEN)
+  /** 开合值的同步镜像：连续快速点击时据此计算下一个状态，不依赖可能过期的闭包 */
+  const sidebarOpenRef = useRef(DEFAULT_SIDEBAR_OPEN)
   /** 待确认关闭的项目：该项目有终端会话在运行 */
   const [pendingCloseProjectId, setPendingCloseProjectId] = useState<string | null>(null)
   /** 哪些项目有终端会话正在运行；用于在侧边栏上给出提示 */
@@ -85,14 +83,6 @@ export default function App(): React.JSX.Element {
   const [startupNotice, setStartupNotice] = useState<string | null>(null)
   /** 启动位置只在首次加载时应用一次 */
   const bootstrapped = useRef(false)
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(sidebarOpen))
-    } catch {
-      // 忽略：偏好写入失败不影响功能
-    }
-  }, [sidebarOpen])
 
   const refresh = useCallback(async (): Promise<ProjectSummary[]> => {
     setLoading(true)
@@ -185,11 +175,26 @@ export default function App(): React.JSX.Element {
     if (bootstrapped.current) return
     bootstrapped.current = true
 
+    // P2-7：旧 localStorage 键一次性迁入应用设置——先经设置通道写入，成功后才清除该键，
+    // 失败则保留键留待下次启动重试；键不存在时不产生任何读写。
+    try {
+      const legacy = window.localStorage.getItem(LEGACY_SIDEBAR_PREFERENCE_KEY)
+      const migrated = parseLegacySidebarPreference(legacy)
+      if (migrated !== null) {
+        await window.workbench.settings.update({ sidebarOpen: migrated })
+        window.localStorage.removeItem(LEGACY_SIDEBAR_PREFERENCE_KEY)
+      }
+    } catch {
+      // 迁移失败不阻断启动：界面回落到设置里的当前值，键保留、下次启动重试
+    }
+
     const view = await window.workbench.app.startupView()
     setRestoreLastProject(view.restoreLastProject)
     setEditorPath(view.editorPath)
     setTerminalSettings(view.terminal)
     terminalSettingsRef.current = view.terminal
+    sidebarOpenRef.current = view.sidebarOpen
+    setSidebarOpen(view.sidebarOpen)
     const target = view.projectId
     if (target !== null && list.some((project) => project.id === target)) {
       await activateProject(target)
@@ -310,8 +315,17 @@ export default function App(): React.JSX.Element {
     setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)))
   }, [])
 
+  /**
+   * 侧栏开合：界面立即翻转并经设置通道持久化（P2-7）。
+   * 写失败必须说出来，否则开关「假生效」、下次启动又回到旧值——与「恢复上次项目」同一约定。
+   */
   const toggleSidebar = useCallback(() => {
-    setSidebarOpen((value) => !value)
+    const next = !sidebarOpenRef.current
+    sidebarOpenRef.current = next
+    setSidebarOpen(next)
+    void window.workbench.settings.update({ sidebarOpen: next }).catch((error: unknown) => {
+      setFatalError(`设置保存失败：${error instanceof Error ? error.message : String(error)}`)
+    })
   }, [])
 
   /** 打开设置页：主区域切到设置，但已打开的项目保持挂载（终端会话不受影响） */
