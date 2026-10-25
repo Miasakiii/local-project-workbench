@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSettingsStore, createStartupLookup, decideStartupView } from '../src/main/modules/app-settings.ts'
 import { createRegistry, createRegistryStore } from '../src/main/modules/project-registry.ts'
+import { DEFAULT_TERMINAL_PREFERENCES } from '../src/shared/terminal-settings.ts'
 import type { SettingsResult } from '../src/shared/ipc.ts'
 
 const keepFixture = process.argv.includes('--keep')
@@ -84,7 +85,7 @@ function main(): void {
       initial.restoreLastProject === false && initial.lastProjectId === null,
       JSON.stringify(initial)
     )
-    check('默认终端 Shell 为空串（自动探测）', initial.defaultShell === '', JSON.stringify(initial))
+    check('默认终端 Shell 为空串（自动探测）', initial.terminal.defaultShell === '', JSON.stringify(initial))
     check('只读取不会创建 settings.json', !existsSync(settingsPath), `存在=${String(existsSync(settingsPath))}`)
 
     const view = startupViewFor(initial, createRegistry(createRegistryStore(registryPath)))
@@ -138,38 +139,38 @@ function main(): void {
   {
     const store = freshSettings()
     for (const shell of ['pwsh', 'powershell', 'cmd']) {
-      store.update({ defaultShell: shell })
+      store.update({ terminal: { defaultShell: shell } })
       check(
         `默认 Shell 可设为 ${shell}`,
-        freshSettings().get().defaultShell === shell,
+        freshSettings().get().terminal.defaultShell === shell,
         JSON.stringify(freshSettings().get())
       )
     }
 
-    store.update({ defaultShell: '' })
-    check('空串表示自动探测', freshSettings().get().defaultShell === '', JSON.stringify(freshSettings().get()))
+    store.update({ terminal: { defaultShell: '' } })
+    check('空串表示自动探测', freshSettings().get().terminal.defaultShell === '', JSON.stringify(freshSettings().get()))
 
     // 界面给出的值只是候选：非白名单字符串、大小写变体、带路径的写法、非字符串一律回落
     const illegal = ['bash', 'pwsh.exe', 'CMD', 'C:\\Windows\\System32\\cmd.exe', ' sh', 42, null, undefined]
     for (const value of illegal) {
-      store.update({ defaultShell: value as unknown as string })
+      store.update({ terminal: { defaultShell: value as unknown as string } })
       const loaded = freshSettings().get()
       check(
         `非法默认 Shell ${JSON.stringify(value)} 回落为自动探测`,
-        loaded.defaultShell === '',
+        loaded.terminal.defaultShell === '',
         JSON.stringify(loaded)
       )
     }
 
     // 局部更新：只改点明的那一项，其余偏好保持原值（设置页每次只提交动过的一项）
-    store.update({ defaultShell: 'pwsh' })
+    store.update({ terminal: { defaultShell: 'pwsh' } })
     store.setRestoreLastProject(true)
     store.recordActiveProject('project-x')
     store.setEditorPath('C:\\editors\\code.cmd')
     const before = store.get()
     check(
       '三项偏好可同时存在',
-      before.defaultShell === 'pwsh' && before.restoreLastProject === true && before.editorPath !== null,
+      before.terminal.defaultShell === 'pwsh' && before.restoreLastProject === true && before.editorPath !== null,
       JSON.stringify(before)
     )
 
@@ -178,19 +179,115 @@ function main(): void {
     check(
       '改开关不动默认 Shell 与编辑器',
       after.restoreLastProject === false &&
-        after.defaultShell === 'pwsh' &&
+        after.terminal.defaultShell === 'pwsh' &&
         after.editorPath === 'C:\\editors\\code.cmd',
       JSON.stringify(after)
     )
 
-    store.update({ defaultShell: 'cmd' })
+    store.update({ terminal: { defaultShell: 'cmd' } })
     const afterShell = freshSettings().get()
     check(
       '改默认 Shell 不动开关',
-      afterShell.defaultShell === 'cmd' &&
+      afterShell.terminal.defaultShell === 'cmd' &&
         afterShell.restoreLastProject === false &&
         afterShell.lastProjectId === 'project-x',
       JSON.stringify(afterShell)
+    )
+
+    rmSync(settingsPath, { force: true })
+  }
+
+  /* ---------- 终端外观偏好：嵌套持久化、逐项校验与旧版迁移 ---------- */
+
+  {
+    const store = freshSettings()
+    store.update({
+      terminal: {
+        fontSize: 18,
+        lineHeight: 1.6,
+        cursorStyle: 'block',
+        copyOnSelect: true,
+        linkOpenBehavior: 'always'
+      }
+    })
+    const reloaded = freshSettings().get()
+    check(
+      '外观偏好跨重启保持',
+      reloaded.terminal.fontSize === 18 &&
+        reloaded.terminal.lineHeight === 1.6 &&
+        reloaded.terminal.cursorStyle === 'block' &&
+        reloaded.terminal.copyOnSelect === true &&
+        reloaded.terminal.linkOpenBehavior === 'always',
+      JSON.stringify(reloaded.terminal)
+    )
+
+    store.setRestoreLastProject(true)
+    check(
+      '改通用开关不动终端偏好',
+      freshSettings().get().terminal.fontSize === 18,
+      JSON.stringify(freshSettings().get().terminal)
+    )
+
+    store.update({
+      terminal: {
+        fontSize: 999,
+        cursorStyle: 'beam' as unknown as 'bar',
+        scrollback: 5
+      }
+    })
+    const clamped = freshSettings().get()
+    check(
+      '越界字号夹回区间、非法枚举回落默认，其它外观不变',
+      clamped.terminal.fontSize === 24 &&
+        clamped.terminal.cursorStyle === 'bar' &&
+        clamped.terminal.scrollback === 1000 &&
+        clamped.terminal.lineHeight === 1.6,
+      JSON.stringify(clamped.terminal)
+    )
+
+    store.update({ terminal: { defaultShell: 'powershell' } })
+    check(
+      '改 Shell 不动外观',
+      freshSettings().get().terminal.fontSize === 24 && freshSettings().get().terminal.lineHeight === 1.6,
+      JSON.stringify(freshSettings().get().terminal)
+    )
+
+    rmSync(settingsPath, { force: true })
+  }
+
+  {
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        version: 1,
+        data: { restoreLastProject: false, lastProjectId: null, editorPath: null, defaultShell: 'pwsh' }
+      }),
+      'utf8'
+    )
+    const migrated = freshSettings().get()
+    check(
+      '旧版扁平 Shell 迁移到终端偏好',
+      migrated.terminal.defaultShell === 'pwsh' &&
+        migrated.terminal.fontSize === DEFAULT_TERMINAL_PREFERENCES.fontSize &&
+        migrated.terminal.startupDirectory === DEFAULT_TERMINAL_PREFERENCES.startupDirectory,
+      JSON.stringify(migrated.terminal)
+    )
+
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        version: 1,
+        data: { defaultShell: 'cmd', terminal: { defaultShell: 'cmd', fontSize: 'huge', cursorBlink: 'yes' } }
+      }),
+      'utf8'
+    )
+    const sanitizedTerminal = freshSettings().get()
+    check(
+      '既有 terminal 对象时逐项回落，不被旧字段覆盖',
+      sanitizedTerminal.terminal.defaultShell === 'cmd' &&
+        sanitizedTerminal.terminal.fontSize === DEFAULT_TERMINAL_PREFERENCES.fontSize &&
+        sanitizedTerminal.terminal.cursorBlink === DEFAULT_TERMINAL_PREFERENCES.cursorBlink,
+      JSON.stringify(sanitizedTerminal.terminal)
     )
 
     rmSync(settingsPath, { force: true })
@@ -206,7 +303,7 @@ function main(): void {
     const loaded = freshSettings().get()
     check(
       '非布尔开关值按关闭处理',
-      loaded.restoreLastProject === false && loaded.lastProjectId === null && loaded.defaultShell === '',
+      loaded.restoreLastProject === false && loaded.lastProjectId === null && loaded.terminal.defaultShell === '',
       JSON.stringify(loaded)
     )
 
@@ -217,7 +314,7 @@ function main(): void {
       'settings.json 损坏时回退为不恢复',
       afterCorrupt.restoreLastProject === false &&
         afterCorrupt.lastProjectId === null &&
-        afterCorrupt.defaultShell === '',
+        afterCorrupt.terminal.defaultShell === '',
       JSON.stringify(afterCorrupt)
     )
     check('损坏文件被保留而非静默丢弃', quarantined.length === 1, quarantined.join(', '))
@@ -247,7 +344,7 @@ function main(): void {
       restoreLastProject: false,
       lastProjectId: 'p1',
       editorPath: null,
-      defaultShell: ''
+      terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
     }
     let lookedUp: string[] = []
     const view = decideStartupView(settings, (projectId) => {
@@ -259,7 +356,12 @@ function main(): void {
     lookedUp = []
 
     const firstRun = decideStartupView(
-      { restoreLastProject: true, lastProjectId: null, editorPath: null, defaultShell: '' },
+      {
+        restoreLastProject: true,
+        lastProjectId: null,
+        editorPath: null,
+        terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
+      },
       (projectId) => {
         lookedUp.push(projectId)
         return { status: 'available' }
@@ -272,7 +374,12 @@ function main(): void {
     )
 
     const restored = decideStartupView(
-      { restoreLastProject: true, lastProjectId: 'p1', editorPath: null, defaultShell: '' },
+      {
+        restoreLastProject: true,
+        lastProjectId: 'p1',
+        editorPath: null,
+        terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
+      },
       (projectId) => {
         lookedUp.push(projectId)
         return { status: 'available' }
@@ -290,7 +397,12 @@ function main(): void {
     )
 
     const unregistered = decideStartupView(
-      { restoreLastProject: true, lastProjectId: 'p1', editorPath: null, defaultShell: '' },
+      {
+        restoreLastProject: true,
+        lastProjectId: 'p1',
+        editorPath: null,
+        terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
+      },
       () => ({
         status: 'unregistered'
       })
@@ -302,7 +414,12 @@ function main(): void {
     )
 
     const unavailable = decideStartupView(
-      { restoreLastProject: true, lastProjectId: 'p1', editorPath: null, defaultShell: '' },
+      {
+        restoreLastProject: true,
+        lastProjectId: 'p1',
+        editorPath: null,
+        terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
+      },
       () => ({
         status: 'unavailable',
         displayName: '甲项目',
