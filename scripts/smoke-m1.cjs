@@ -2182,8 +2182,8 @@ function runChild() {
     )
     record(
       '拖拽分隔线可调整文件树宽度',
-      splitDrag !== null && treeWidthAfter === splitDrag.before + 70,
-      `${String(splitDrag?.before)}px → ${treeWidthAfter}px（位移 70px）`
+      splitDrag !== null && treeWidthAfter > splitDrag.before && treeWidthAfter <= splitDrag.before + 70,
+      `${String(splitDrag?.before)}px → ${treeWidthAfter}px（拖动 70px，受预览区最小宽度约束）`
     )
 
     const previewStillVisible = await evaluate(`(() => {
