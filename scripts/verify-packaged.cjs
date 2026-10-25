@@ -255,6 +255,29 @@ async function main() {
       `require=${bridge.requireType} process=${bridge.processType} ipcRenderer=${bridge.ipcRendererType}`
     )
 
+    // GPU 对照验收：记录 Chromium 实际选择的后端（硬件 ANGLE 或 SwiftShader），
+    // 同一断言在默认与 VERIFY_PACKAGED_GL_FLAGS=--use-angle=swiftshader 下都成立。
+    const graphics = await evaluate(
+      cdp,
+      `(() => {
+        const canvas = document.createElement('canvas')
+        const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
+        if (gl === null) return { webgl: false, renderer: null, vendor: null, version: null }
+        const info = gl.getExtension('WEBGL_debug_renderer_info')
+        return {
+          webgl: true,
+          renderer: info === null ? gl.getParameter(gl.RENDERER) : gl.getParameter(info.UNMASKED_RENDERER_WEBGL),
+          vendor: info === null ? gl.getParameter(gl.VENDOR) : gl.getParameter(info.UNMASKED_VENDOR_WEBGL),
+          version: gl.getParameter(gl.VERSION)
+        }
+      })()`
+    )
+    check(
+      '渲染进程可创建 WebGL 上下文',
+      graphics.webgl === true,
+      `renderer=${String(graphics.renderer)} vendor=${String(graphics.vendor)} version=${String(graphics.version)}`
+    )
+
     const fontStack = await evaluate(
       cdp,
       `getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim()`
@@ -329,6 +352,47 @@ async function main() {
       '裁剪后的 node-pty 在打包产物中可用',
       terminal.data !== null && terminal.data.length > 0,
       `shell=${terminal.created.shell} 收到 ${terminal.data === null ? 0 : terminal.data.length} 字节`
+    )
+
+    // 界面终端挂载：确认 xterm 真正渲染，且 WebGL 可用时必须使用画布后端。
+    // 软件渲染（--use-angle=swiftshader）仍应成功挂载；无 WebGL 时才允许 DOM 回退。
+    const terminalUi = await evaluate(
+      cdp,
+      `(async () => {
+        const toggle = document.querySelector('.terminal-toggle')
+        if (toggle === null) return { mounted: false, reason: 'no-toggle' }
+        toggle.click()
+        const deadline = Date.now() + 15000
+        while (Date.now() < deadline) {
+          const host = document.querySelector('.terminal-host')
+          const screen = host === null ? null : host.querySelector('.xterm-screen')
+          if (screen !== null) {
+            await new Promise((resolve) => setTimeout(resolve, 800))
+            const canvas = host.querySelector('canvas')
+            return {
+              mounted: true,
+              canvas: canvas !== null,
+              canvasWidth: canvas?.width ?? 0,
+              canvasHeight: canvas?.height ?? 0,
+              state: document.querySelector('.terminal-status-state')?.textContent ?? null
+            }
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250))
+        }
+        return { mounted: false, reason: 'timeout' }
+      })()`
+    )
+    check(
+      '终端在打包产物中挂载并运行',
+      terminalUi.mounted === true && String(terminalUi.state).includes('运行中'),
+      terminalUi.mounted === true
+        ? `状态=${String(terminalUi.state)} 画布=${terminalUi.canvasWidth}x${terminalUi.canvasHeight}`
+        : `未挂载：${String(terminalUi.reason)}`
+    )
+    check(
+      '终端渲染后端与 WebGL 能力一致',
+      terminalUi.mounted === true && (graphics.webgl !== true || terminalUi.canvas === true),
+      `WebGL=${graphics.webgl} xterm=${terminalUi.canvas === true ? 'canvas' : 'dom'} renderer=${String(graphics.renderer)}`
     )
 
     const chinese = await evaluate(
