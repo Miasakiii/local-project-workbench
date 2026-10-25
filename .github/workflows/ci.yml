@@ -22,6 +22,11 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # Electron 44 不再通过 postinstall 下载运行时；验证脚本直接调用 dist/electron.exe，
+      # 因此必须在构建与测试前显式准备。
+      - name: 准备 Electron 运行时
+        run: node node_modules/electron/install.js
+
       - name: 代码检查（biome lint）
         run: npm run lint
 

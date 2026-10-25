@@ -125,6 +125,7 @@
 - 单元用例 99 → 101：新增 Windows 编辑器类型限制、终端早到事件按会话回放断言；覆盖率实测 91.60% 行 / 85.57% 分支 / 88.64% 函数。
 - `verify:m2-diff` 36 → 37：新增「登记目录为 Git 仓库子目录时，重命名原路径不得读取父级仓库文件」回归；`verify:g3b-editor` 6 → 7：新增 Windows `.cmd` 被拒绝并迁移为未设置。
 - 新增真实 ACL 验证 `verify:acl-real` 4/4：生产删除路径报告 `permission-denied`、拒绝计入失败且不调用回收站、恢复 ACL 后同一文件可正常删除。
+- CI 与 Release workflow 在 `npm ci` 后显式执行 `node node_modules/electron/install.js`，修复 Electron 44 移除 `postinstall` 后 Windows runner 缺少 `dist/electron.exe` 导致的验证失败。
 - 打包产物验证 9 → 12 项：新增 WebGL 上下文、终端挂载运行、终端渲染后端与 WebGL 能力一致；NVIDIA RTX 4060（D3D11）与 `--use-angle=swiftshader` 两条路径均 12/12。
 - 最终 `verify:all` 共 752 项集成断言全绿。
 

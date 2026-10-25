@@ -269,7 +269,7 @@ npm run verify:all          # 静态检查 + 体积守卫 + 类型检查 + 构�
 npm run capture:ui          # 重建并复跑端到端，生成 docs/design/ui-baseline/ 真实 Electron 截图
 ```
 
-仓库已在 `.github/workflows/ci.yml` 配置 GitHub Actions：push 或 PR 到 `main` 时，在 `windows-latest` 上依次执行 lint、体积守卫、类型检查、构建与 `verify:suites`——等价于完整 `npm run verify:all`，拆成独立步骤便于定位失败；终端套件依赖 Windows ConPTY，故不用 Linux runner。
+仓库已在 `.github/workflows/ci.yml` 配置 GitHub Actions：push 或 PR 到 `main` 时，在 `windows-latest` 上安装依赖并显式准备 Electron 运行时，再依次执行 lint、体积守卫、类型检查、构建与 `verify:suites`——等价于完整 `npm run verify:all`，拆成独立步骤便于定位失败；Electron 44 不再通过 `postinstall` 下载运行时，所以必须在验证脚本直接调用 `dist/electron.exe` 前准备；终端套件依赖 Windows ConPTY，故不用 Linux runner。
 
 各套件可单独运行：
 
