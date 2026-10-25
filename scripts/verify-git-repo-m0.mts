@@ -101,7 +101,7 @@ try {
     await git(repoRoot, ['init', '-q', '-b', 'main'])
     const subdir = join(repoRoot, 'sub', 'deep')
     mkdirSync(subdir, { recursive: true })
-    const norm = (value: string): string => realpathSync(value).replace(/\\/g, '/').toLowerCase()
+    const norm = (value: string): string => realpathSync.native(value).replace(/\\/g, '/').toLowerCase()
     const fromSub = await detectRepositoryRoot(subdir)
     checks.push([
       '仓库根解析（子目录→仓库根）',
