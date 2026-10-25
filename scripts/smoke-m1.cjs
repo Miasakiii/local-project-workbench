@@ -164,6 +164,8 @@ function runChild() {
    * 「重启」由父进程分别派生真实进程实现，偏好与上次项目通过应用数据目录跨进程传递。
    */
   const phase = process.env.WORKBENCH_SMOKE_PHASE || 'main'
+  const captureArg = process.argv.find((item) => item.startsWith('--capture-ui='))
+  const captureDir = captureArg === undefined ? null : path.resolve(ROOT, captureArg.slice('--capture-ui='.length))
   const settingsFile = () => path.join(app.getPath('userData'), 'settings.json')
   const readSettings = () => {
     try {
@@ -489,6 +491,14 @@ function runChild() {
       }
       return false
     }
+    const captureUi = async (name) => {
+      if (captureDir === null || phase !== 'main') return
+      fs.mkdirSync(captureDir, { recursive: true })
+      await sleep(200)
+      const image = await window.webContents.capturePage()
+      fs.writeFileSync(path.join(captureDir, `${name}.png`), image.toPNG())
+      console.log(`[截图] ${name}.png（${window.getBounds().width}×${window.getBounds().height}）`)
+    }
 
     const surface = await window.webContents.executeJavaScript(`(() => ({
       hasWorkbench: typeof window.workbench === 'object' && window.workbench !== null,
@@ -572,8 +582,8 @@ function runChild() {
     }))()`)
     record('侧边栏设置入口可打开设置页', settingsShown === true, `设置页=${String(settingsShown)}`)
     record(
-      '设置页承载编辑器、终端、启动与关于四组',
-      ['编辑器', '终端', '启动', '关于'].every((title) => settingsView.groups.includes(title)),
+      '设置页按通用、编辑器、终端、快捷键与关于组织',
+      ['通用', '编辑器', '终端', '快捷键', '关于'].every((title) => settingsView.groups.includes(title)),
       `分组=${settingsView.groups.join(' / ')}`
     )
     record(
@@ -592,6 +602,26 @@ function runChild() {
       String(settingsView.editorText)
     )
     record('关于展示 Electron 版本', settingsView.aboutText.includes('Electron '), settingsView.aboutText.slice(0, 60))
+    await captureUi('03-settings-1280x840')
+
+    const defaultBounds = window.getBounds()
+    window.setSize(960, 600)
+    await sleep(250)
+    const settingsCompact = await evaluate(`(() => ({
+      viewport: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      unreachable: [...document.querySelectorAll('.settings-page button, .settings-page select')]
+        .filter((item) => { const rect = item.getBoundingClientRect(); return rect.left < 0 || rect.right > window.innerWidth })
+        .length
+    }))()`)
+    record(
+      '设置页在最小窗口无横向溢出且操作可达',
+      settingsCompact.documentWidth <= settingsCompact.viewport && settingsCompact.unreachable === 0,
+      `视口=${settingsCompact.viewport}px 内容=${settingsCompact.documentWidth}px 越界操作=${settingsCompact.unreachable}`
+    )
+    await captureUi('03-settings-960x600')
+    window.setBounds(defaultBounds)
+    await sleep(250)
 
     // 默认 Shell 经设置页写入应用数据目录（白名单值，主进程持久化）
     await evaluate(`(() => {
@@ -634,6 +664,7 @@ function runChild() {
     )
     const backToLibrary = await waitFor(`document.querySelectorAll('.library-page').length > 0`)
     record('从设置页可回到项目库', backToLibrary === true, `项目库=${String(backToLibrary)}`)
+    await captureUi('01-library-1280x840')
 
     // 端到端 IPC：项目列表
     const projects = await window.webContents.executeJavaScript('window.workbench.project.list()')
@@ -769,6 +800,26 @@ function runChild() {
     })()`)
     record('项目库卡片可打开项目', opened === true, opened ? '已进入项目页' : '未找到「打开」按钮')
     await waitFor(`document.querySelectorAll('.project-page').length > 0`)
+    await captureUi('02-project-1280x840')
+
+    window.setSize(960, 600)
+    await sleep(250)
+    const projectCompact = await evaluate(`(() => ({
+      viewport: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      unreachable: [...document.querySelectorAll('.project-header button')]
+        .filter((item) => { const rect = item.getBoundingClientRect(); return rect.left < 0 || rect.right > window.innerWidth })
+        .length,
+      backHeight: Math.round(document.querySelector('.project-header .back')?.getBoundingClientRect().height ?? 0)
+    }))()`)
+    record(
+      '项目头部在最小窗口无横向溢出且操作可达',
+      projectCompact.documentWidth <= projectCompact.viewport && projectCompact.unreachable === 0 && projectCompact.backHeight <= 40,
+      `视口=${projectCompact.viewport}px 内容=${projectCompact.documentWidth}px 越界操作=${projectCompact.unreachable} 返回按钮高=${projectCompact.backHeight}px`
+    )
+    await captureUi('02-project-960x600')
+    window.setBounds(defaultBounds)
+    await sleep(250)
 
     /* ---------- 网络图片按项目授权（设计稿 4.3 / G1） ---------- */
 
@@ -1241,6 +1292,7 @@ function runChild() {
       `panel=${maximizedState?.panelHeight}px page=${maximizedState?.pageHeight}px 拖拽手柄=${String(maximizedState?.resizeHandles)}`
     )
     record('全屏不重建会话', maximizedState?.hosts === hostsBeforeToggle, `host 数=${String(maximizedState?.hosts)}`)
+    await captureUi('04-terminal-focus-1280x840')
 
     await evaluate(`(() => {
       const button = [...document.querySelectorAll('.terminal-panel button')].find((item) => item.textContent.trim() === '还原')
@@ -1627,7 +1679,9 @@ function runChild() {
     })()`)
     let keyboardTree = null
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      await evaluate(`(() => { const first = document.querySelector('[role="treeitem"]'); if (first) first.focus() })()`)
+      await evaluate(
+        `(() => { const first = document.querySelector('[role="treeitem"]'); if (first) first.focus() })()`
+      )
       await sleep(150)
       await evaluate(`(() => {
         const active = document.activeElement
@@ -2263,7 +2317,7 @@ if (process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE) {
    */
   const runPhase = (name, timeoutMs) =>
     new Promise((resolve) => {
-      const child = spawn(ELECTRON_BIN, [__filename], {
+      const child = spawn(ELECTRON_BIN, [__filename, ...process.argv.slice(2)], {
         cwd: ROOT,
         env: { ...env, WORKBENCH_SMOKE_PHASE: name },
         stdio: ['ignore', 'pipe', 'pipe'],

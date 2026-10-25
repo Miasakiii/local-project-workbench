@@ -83,56 +83,62 @@ export function ProjectHeader({
       </div>
 
       <div className="project-badges">
-        {project.isGitRepository === true ? <span className="chip chip-git">Git 仓库</span> : null}
-        {project.isGitRepository === false ? <span className="chip">普通目录</span> : null}
-        {project.isGitRepository === null ? <span className="chip chip-warn">Git 不可用</span> : null}
-        {project.isGitRepository === true && gitSnapshot !== null ? (
-          gitSnapshot.stale || gitSnapshot.error !== null ? (
-            <span className="chip chip-warn" title={gitSnapshot.error ?? 'Git 状态查询失败或已过期'}>
-              Git 状态不可用
-            </span>
-          ) : (
-            <>
-              <span
-                className="chip"
-                title={gitSnapshot.branch === null ? '尚无分支提交' : `当前分支：${gitSnapshot.branch}`}
-              >
-                分支 {gitSnapshot.branch ?? '（无分支）'}
+        <div className="project-status">
+          {project.isGitRepository === true ? <span className="chip chip-git">Git 仓库</span> : null}
+          {project.isGitRepository === false ? <span className="chip">普通目录</span> : null}
+          {project.isGitRepository === null ? <span className="chip chip-warn">Git 不可用</span> : null}
+          {project.isGitRepository === true && gitSnapshot !== null ? (
+            gitSnapshot.stale || gitSnapshot.error !== null ? (
+              <span className="chip chip-warn" title={gitSnapshot.error ?? 'Git 状态查询失败或已过期'}>
+                Git 状态不可用
               </span>
-              <span className="chip">变更 {new Set(gitSnapshot.entries.map((entry) => entry.relativePath)).size}</span>
-            </>
-          )
-        ) : null}
-        <button
-          type="button"
-          className={project.trusted ? 'chip chip-trusted' : 'chip'}
-          onClick={onToggleTrust}
-          title="不可信项目默认只读浏览；信任后才允许创建终端与删除等写操作"
-        >
-          {project.trusted ? '已信任（点击改为只读）' : '只读浏览（点击信任）'}
-        </button>
-        <button
-          type="button"
-          className={terminalOpen ? 'terminal-toggle active' : 'terminal-toggle'}
-          onClick={onToggleTerminal}
-          aria-pressed={terminalOpen}
-          title={
-            tabCount === 0
-              ? project.trusted
-                ? '新建终端会话（Ctrl+`）'
-                : '创建终端前需要先信任该项目'
-              : terminalOpen
-                ? '收起终端面板（Ctrl+`，不结束会话）'
-                : '展开终端面板（Ctrl+`）'
-          }
-        >
-          <TerminalIcon />
-          <span className="terminal-toggle-label">终端</span>
-          <span className={runningTabCount > 0 ? 'terminal-badge live' : 'terminal-badge'}>{terminalStateLabel}</span>
-        </button>
-        <button type="button" onClick={onReveal}>
-          在资源管理器中打开
-        </button>
+            ) : (
+              <>
+                <span
+                  className="chip"
+                  title={gitSnapshot.branch === null ? '尚无分支提交' : `当前分支：${gitSnapshot.branch}`}
+                >
+                  分支 {gitSnapshot.branch ?? '（无分支）'}
+                </span>
+                <span className="chip">
+                  变更 {new Set(gitSnapshot.entries.map((entry) => entry.relativePath)).size}
+                </span>
+              </>
+            )
+          ) : null}
+          <button
+            type="button"
+            className={project.trusted ? 'chip chip-trusted' : 'chip'}
+            onClick={onToggleTrust}
+            title="不可信项目默认只读浏览；信任后才允许创建终端与删除等写操作"
+          >
+            {project.trusted ? '已信任（点击改为只读）' : '只读浏览（点击信任）'}
+          </button>
+        </div>
+        <div className="project-actions">
+          <button
+            type="button"
+            className={terminalOpen ? 'terminal-toggle active' : 'terminal-toggle'}
+            onClick={onToggleTerminal}
+            aria-pressed={terminalOpen}
+            title={
+              tabCount === 0
+                ? project.trusted
+                  ? '新建终端会话（Ctrl+`）'
+                  : '创建终端前需要先信任该项目'
+                : terminalOpen
+                  ? '收起终端面板（Ctrl+`，不结束会话）'
+                  : '展开终端面板（Ctrl+`）'
+            }
+          >
+            <TerminalIcon />
+            <span className="terminal-toggle-label">终端</span>
+            <span className={runningTabCount > 0 ? 'terminal-badge live' : 'terminal-badge'}>{terminalStateLabel}</span>
+          </button>
+          <button type="button" onClick={onReveal}>
+            在资源管理器中打开
+          </button>
+        </div>
       </div>
     </header>
   )

@@ -10,21 +10,29 @@
 }
 
 .project-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(300px, 1fr);
+  gap: var(--space-3) var(--space-4);
   align-items: center;
   padding: 10px 18px;
-  background: rgba(246, 246, 248, 0.82);
+  background: var(--surface-header);
   backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 1px solid var(--separator);
-  flex-wrap: wrap;
 }
 
 .project-identity {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+.project-identity .back {
+  flex: none;
+  white-space: nowrap;
+}
+
+.project-identity .title-block {
   min-width: 0;
 }
 
@@ -43,11 +51,27 @@
   white-space: nowrap;
 }
 
-.project-badges {
+.project-badges,
+.project-status,
+.project-actions {
   display: flex;
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.project-badges {
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.project-status {
+  color: var(--text-2);
+}
+
+.project-actions {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--separator);
 }
 
 .project-badges button.chip {
@@ -417,66 +441,121 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px 24px 26px;
+  padding: var(--space-6) 28px 32px;
   background: var(--bg-content);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
 }
 
 .settings-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  max-width: 1040px;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--separator);
 }
 
 .settings-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .settings-title h1 {
-  font-size: 18px;
+  font-size: 20px;
+}
+
+.settings-groups {
+  max-width: 1040px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding-top: var(--space-4);
 }
 
 .settings-group {
-  max-width: 720px;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-subtle);
-  padding: 14px 16px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
 
 .settings-group h2 {
   font-size: 13px;
 }
 
+.settings-group > .hint {
+  margin: 0;
+}
+
 .settings-row {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
 .settings-row .field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   font-size: 12.5px;
   color: var(--text-2);
 }
 
-/* 路径值可能很长：等宽 + 全量换行，避免用省略号藏掉用户要确认的信息 */
 .settings-value {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-2);
   word-break: break-all;
+}
+
+.shortcut-list {
+  width: 100%;
+  margin: 0;
+}
+
+.shortcut-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--separator);
+}
+
+.shortcut-list > div:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-list dt {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.shortcut-list dd {
+  flex: none;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.shortcut-list kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom-color: var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 11px var(--font-ui);
+  text-align: center;
+  box-shadow: var(--shadow-1);
 }
 
 /* ---------- 分段控件（项目页页面切换） ---------- */
@@ -531,4 +610,26 @@
   overflow: auto;
   padding: 18px 22px 22px;
   background: var(--bg-content);
+}
+
+@media (max-width: 1180px) {
+  .project-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .project-badges {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .settings-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1000px) {
+  .project-actions {
+    padding-left: 0;
+    border-left: 0;
+  }
 }

@@ -27,8 +27,8 @@
   --border-strong: rgba(0, 0, 0, 0.16);
 
   --text: #1d1d1f;
-  --text-2: #6e6e73;
-  --text-3: #8e8e93;
+  --text-2: #5f5f64;
+  --text-3: #6e6e73;
 
   --accent: #007aff;
   --accent-strong: #0062cc;
@@ -44,6 +44,18 @@
   --ok-soft: rgba(52, 199, 89, 0.14);
   --violet: #6b3fbf;
   --violet-soft: rgba(120, 80, 200, 0.12);
+
+  --surface-raised: #ffffff;
+  --surface-header: rgba(246, 246, 248, 0.88);
+  --surface-hover: #f2f2f5;
+  --surface-pressed: #e6e6eb;
+  --control-height: 28px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
 
   --radius-xs: 5px;
   --radius-sm: 7px;
@@ -98,4 +110,15 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.34);
   background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

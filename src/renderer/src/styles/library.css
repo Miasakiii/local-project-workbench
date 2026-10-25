@@ -151,10 +151,9 @@
   max-width: 560px;
   margin: 56px auto;
   padding: 28px 30px;
-  background: var(--bg-content);
+  background: var(--bg-subtle);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-1);
   text-align: center;
 }
 
