@@ -7,6 +7,7 @@ import {
   createSettingsStore,
   createStartupLookup,
   decideStartupView,
+  isSupportedEditorPath,
   sanitizeDefaultShell,
   type StartupProjectState
 } from '../../src/main/modules/app-settings'
@@ -33,6 +34,17 @@ test('默认 Shell 白名单只接受 pwsh / powershell / cmd', () => {
   for (const value of ['', 'bash', 'PWSH', 'C:\\Windows\\System32\\cmd.exe', null, 1]) {
     assert.equal(sanitizeDefaultShell(value), '')
   }
+})
+
+test('Windows 编辑器仅接受可直接启动的 .exe', () => {
+  assert.equal(isSupportedEditorPath('C:\\Apps\\Code.exe', 'win32'), true)
+  assert.equal(isSupportedEditorPath('C:\\Apps\\CODE.EXE', 'win32'), true)
+  assert.equal(isSupportedEditorPath('C:\\Apps\\code.cmd', 'win32'), false)
+  assert.equal(isSupportedEditorPath('C:\\Apps\\code.bat', 'win32'), false)
+  assert.equal(isSupportedEditorPath('C:\\Apps\\code', 'win32'), false)
+  assert.equal(isSupportedEditorPath('/usr/local/bin/code', 'linux'), true)
+  assert.equal(isSupportedEditorPath('', 'linux'), false)
+  assert.equal(isSupportedEditorPath(null, 'win32'), false)
 })
 
 test('启动开关关闭时停留项目库且不解释', () => {

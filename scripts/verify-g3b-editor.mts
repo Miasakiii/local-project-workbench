@@ -40,6 +40,11 @@ try {
   const reopened = createSettingsStore(file)
   check('持久化后可读回', reopened.get().editorPath === editor, String(reopened.get().editorPath))
 
+  if (process.platform === 'win32') {
+    store.setEditorPath('C:\\ed\\broken.cmd')
+    check('Windows 拒绝无法直接启动的 .cmd 编辑器', store.get().editorPath === null, String(store.get().editorPath))
+  }
+
   store.setEditorPath(null)
   check('setEditorPath(null) 清空', store.get().editorPath === null, String(store.get().editorPath))
 

@@ -163,7 +163,7 @@ export function SettingsPage({
         <section className="settings-group" aria-labelledby="settings-editor-title">
           <h2 id="settings-editor-title">编辑器</h2>
           <p className="hint">
-            用于文件树右键菜单里的「用指定编辑器打开」。未设置时该项不可用，「用默认程序打开」不受影响。
+            用于文件树右键菜单里的「用指定编辑器打开」。Windows 仅支持 .exe；未设置时该项不可用，「用默认程序打开」不受影响。
           </p>
           <div className="settings-row">
             <span className="settings-value" title={editorPath ?? undefined}>

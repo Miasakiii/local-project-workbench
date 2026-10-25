@@ -1,3 +1,4 @@
+import { extname } from 'node:path'
 import type { SettingsResult } from '@shared/ipc'
 import {
   DEFAULT_TERMINAL_PREFERENCES,
@@ -37,6 +38,16 @@ export function sanitizeDefaultShell(value: unknown): string {
   return typeof value === 'string' && (SHELL_CHOICES as readonly string[]).includes(value) ? value : ''
 }
 
+/**
+ * 编辑器必须能被 `spawn(editor, [target])` 直接启动。
+ * Windows 上 `.bat/.cmd` 需要经 cmd.exe 解释，直接派生会以 EINVAL 失败；本应用不
+ * 为打开文件引入一层命令行转义，因此只接受 `.exe`。
+ */
+export function isSupportedEditorPath(path: unknown, platform: string = process.platform): path is string {
+  if (typeof path !== 'string' || path.length === 0) return false
+  return platform !== 'win32' || extname(path).toLowerCase() === '.exe'
+}
+
 function sanitizeSettings(raw: unknown): SettingsResult | null {
   if (!isRecord(raw)) return null
   const last = raw['lastProjectId']
@@ -48,7 +59,7 @@ function sanitizeSettings(raw: unknown): SettingsResult | null {
   return {
     restoreLastProject: raw['restoreLastProject'] === true,
     lastProjectId: typeof last === 'string' && last.length > 0 ? last : null,
-    editorPath: typeof editor === 'string' && editor.length > 0 ? editor : null,
+    editorPath: isSupportedEditorPath(editor) ? editor : null,
     terminal: sanitizeTerminalPreferences(terminalRaw)
   }
 }
@@ -82,7 +93,7 @@ export class AppSettingsStore {
   setEditorPath(path: string | null): SettingsResult {
     const next: SettingsResult = {
       ...this.get(),
-      editorPath: typeof path === 'string' && path.length > 0 ? path : null
+      editorPath: isSupportedEditorPath(path) ? path : null
     }
     this.store.write(next)
     return next

@@ -166,7 +166,7 @@ function main(): void {
     store.update({ terminal: { defaultShell: 'pwsh' } })
     store.setRestoreLastProject(true)
     store.recordActiveProject('project-x')
-    store.setEditorPath('C:\\editors\\code.cmd')
+    store.setEditorPath('C:\\editors\\code.exe')
     const before = store.get()
     check(
       '三项偏好可同时存在',
@@ -180,7 +180,7 @@ function main(): void {
       '改开关不动默认 Shell 与编辑器',
       after.restoreLastProject === false &&
         after.terminal.defaultShell === 'pwsh' &&
-        after.editorPath === 'C:\\editors\\code.cmd',
+        after.editorPath === 'C:\\editors\\code.exe',
       JSON.stringify(after)
     )
 

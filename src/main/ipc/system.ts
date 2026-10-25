@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import type { OpenExternalRequest, OpenPathRequest, WatcherSetActiveRequest } from '@shared/ipc'
 import { IpcChannel } from '@shared/ipc'
 import { shell } from 'electron'
+import { isSupportedEditorPath } from '../modules/app-settings'
 import { resolveEntryPath } from '../modules/file-browser'
 import type { IpcContext } from './context'
 import { pickEditorExecutable } from './dialogs'
@@ -55,6 +56,9 @@ export function registerSystemIpc(ctx: IpcContext): void {
   ctx.handle(IpcChannel.systemSetEditor, async (event): Promise<string | null> => {
     const chosen = await pickEditorExecutable(event)
     if (chosen === null) return null
+    if (!isSupportedEditorPath(chosen)) {
+      throw new Error('Windows 上仅支持选择 .exe 可执行文件作为编辑器。')
+    }
     return ctx.settings().setEditorPath(chosen).editorPath
   })
 

@@ -45,7 +45,7 @@ export function pickRelocateDirectory(event: IpcMainInvokeEvent): Promise<string
 export async function pickEditorExecutable(event: IpcMainInvokeEvent): Promise<string | null> {
   const filters =
     process.platform === 'win32'
-      ? [{ name: '可执行文件', extensions: ['exe', 'bat', 'cmd'] }]
+      ? [{ name: '可执行文件', extensions: ['exe'] }]
       : [{ name: '可执行文件', extensions: ['*'] }]
   const owner = BrowserWindow.fromWebContents(event.sender)
   const result = owner
