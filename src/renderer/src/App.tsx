@@ -1,6 +1,8 @@
 import type { AppInfo, ProjectSummary } from '@shared/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { AppShell } from './components/AppShell'
 import { ProjectSidebar } from './components/ProjectSidebar'
+import { SessionDialogs } from './components/SessionDialogs'
 import { useModalFocus } from './hooks/useModalFocus'
 import { LibraryPage } from './pages/LibraryPage'
 import { ProjectPage } from './pages/ProjectPage'
@@ -295,19 +297,14 @@ export default function App(): React.JSX.Element {
   const runningCount = runningProjectIds.length
 
   return (
-    <div className="app">
-      {fatalError !== null ? (
-        <div className="inline-error banner banner-dismissible" role="alert">
-          <span className="banner-text">{fatalError}</span>
-          <button type="button" className="banner-dismiss" onClick={() => setFatalError(null)} aria-label="关闭提示">
-            ×
-          </button>
-        </div>
-      ) : null}
-
-      {startupNotice !== null ? <p className="inline-notice banner">{startupNotice}</p> : null}
-
-      <div className="app-body">
+    <AppShell
+      fatalError={fatalError}
+      startupNotice={startupNotice}
+      info={info}
+      openProjectCount={openProjectIds.length}
+      runningCount={runningCount}
+      onDismissFatalError={() => setFatalError(null)}
+      sidebar={
         <ProjectSidebar
           open={sidebarOpen}
           projects={projects}
@@ -326,129 +323,83 @@ export default function App(): React.JSX.Element {
           }}
           onShowSettings={() => void showSettings()}
         />
+      }
+      dialogs={
+        <SessionDialogs
+          closeProjectName={
+            pendingCloseProjectId === null
+              ? null
+              : (projects.find((item) => item.id === pendingCloseProjectId)?.displayName ?? '该项目')
+          }
+          pendingQuit={pendingQuit}
+          closeDialogRef={closeDialogRef}
+          quitDialogRef={quitDialogRef}
+          onCancelClose={() => setPendingCloseProjectId(null)}
+          onConfirmClose={() => {
+            if (pendingCloseProjectId !== null) closeProject(pendingCloseProjectId)
+            setPendingCloseProjectId(null)
+          }}
+          onCancelQuit={() => setPendingQuit(null)}
+          onConfirmQuit={() => {
+            setPendingQuit(null)
+            void window.workbench.app.confirmQuit({ confirmed: true })
+          }}
+        />
+      }
+    >
+      {settingsOpen ? (
+        <SettingsPage
+          info={info}
+          sidebarOpen={sidebarOpen}
+          restoreLastProject={restoreLastProject}
+          editorPath={editorPath}
+          defaultShell={defaultShell}
+          onToggleSidebar={toggleSidebar}
+          onSetRestoreLastProject={(enabled) => void updateSettings({ restoreLastProject: enabled })}
+          onConfigureEditor={() => void configureEditor()}
+          onClearEditor={() => void clearEditor()}
+          onDefaultShellChange={(shell) => void updateSettings({ defaultShell: shell })}
+        />
+      ) : null}
 
-        <div className="app-main">
-          {settingsOpen ? (
-            <SettingsPage
-              info={info}
+      {activeProjectId === null && !settingsOpen ? (
+        <LibraryPage
+          projects={projects}
+          loading={loading}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+          onRefresh={refresh}
+          onOpenProject={(projectId) => void activateProject(projectId)}
+          onRegister={register}
+          registerBusy={registerBusy}
+        />
+      ) : null}
+
+      {openProjectIds.map((projectId) => {
+        const project = projects.find((item) => item.id === projectId)
+        if (project === undefined) return null
+        // 设置页是独立主区域视图：项目保持挂载但退出活动态，
+        // 因此其快捷键不响应、终端面板也不与设置页同时可见。
+        const isActive = !settingsOpen && projectId === activeProjectId
+        return (
+          <div key={projectId} className={isActive ? 'project-slot' : 'project-slot hidden'}>
+            <ProjectPage
+              project={project}
+              active={isActive}
               sidebarOpen={sidebarOpen}
-              restoreLastProject={restoreLastProject}
-              editorPath={editorPath}
+              onToggleSidebar={toggleSidebar}
+              onBack={() => {
+                leaveSettings()
+                setActiveProjectId(null)
+              }}
+              onProjectChange={handleProjectChange}
+              onTerminalRunningChange={handleTerminalRunningChange}
               defaultShell={defaultShell}
-              onToggleSidebar={toggleSidebar}
-              onSetRestoreLastProject={(enabled) => void updateSettings({ restoreLastProject: enabled })}
-              onConfigureEditor={() => void configureEditor()}
-              onClearEditor={() => void clearEditor()}
-              onDefaultShellChange={(shell) => void updateSettings({ defaultShell: shell })}
+              editorPath={editorPath}
             />
-          ) : null}
-
-          {activeProjectId === null && !settingsOpen ? (
-            <LibraryPage
-              projects={projects}
-              loading={loading}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={toggleSidebar}
-              onRefresh={refresh}
-              onOpenProject={(projectId) => void activateProject(projectId)}
-              onRegister={register}
-              registerBusy={registerBusy}
-            />
-          ) : null}
-
-          {openProjectIds.map((projectId) => {
-            const project = projects.find((item) => item.id === projectId)
-            if (project === undefined) return null
-            // 设置页是独立主区域视图：项目保持挂载但退出活动态，
-            // 因此其快捷键不响应、终端面板也不与设置页同时可见。
-            const isActive = !settingsOpen && projectId === activeProjectId
-            return (
-              <div key={projectId} className={isActive ? 'project-slot' : 'project-slot hidden'}>
-                <ProjectPage
-                  project={project}
-                  active={isActive}
-                  sidebarOpen={sidebarOpen}
-                  onToggleSidebar={toggleSidebar}
-                  onBack={() => {
-                    leaveSettings()
-                    setActiveProjectId(null)
-                  }}
-                  onProjectChange={handleProjectChange}
-                  onTerminalRunningChange={handleTerminalRunningChange}
-                  defaultShell={defaultShell}
-                  editorPath={editorPath}
-                />
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {pendingCloseProjectId !== null ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="close-sessions-title">
-          <div className="modal" ref={closeDialogRef}>
-            <h2 id="close-sessions-title">
-              「{projects.find((item) => item.id === pendingCloseProjectId)?.displayName ?? '该项目'}
-              」的终端会话正在运行
-            </h2>
-            <p>关闭项目会结束该项目的终端会话，正在其中运行的命令会被中断。</p>
-            <p className="hint">不承诺恢复原来的进程；重新打开项目后需要重新执行命令。</p>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setPendingCloseProjectId(null)}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  closeProject(pendingCloseProjectId)
-                  setPendingCloseProjectId(null)
-                }}
-              >
-                结束会话并关闭
-              </button>
-            </div>
           </div>
-        </div>
-      ) : null}
-
-      {pendingQuit !== null ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="quit-sessions-title">
-          <div className="modal" ref={quitDialogRef}>
-            <h2 id="quit-sessions-title">还有 {pendingQuit} 个终端会话正在运行</h2>
-            <p>退出应用会结束这些会话，正在其中运行的命令会被中断。</p>
-            <p className="hint">不承诺恢复原来的进程；下次启动后需要重新执行命令。</p>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setPendingQuit(null)}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  setPendingQuit(null)
-                  void window.workbench.app.confirmQuit({ confirmed: true })
-                }}
-              >
-                结束会话并退出
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <footer className="app-footer">
-        <span>
-          {info === null
-            ? '本地项目工作台'
-            : `Electron ${info.electronVersion} · Chromium ${info.chromeVersion} · Node ${info.nodeVersion}`}
-        </span>
-        <span className="hint">
-          {openProjectIds.length > 0 ? `已打开 ${openProjectIds.length} 个项目 · ` : ''}
-          {runningCount > 0 ? `${runningCount} 个终端运行中 · ` : ''}
-          项目停留在原位置，不复制、不上传源码
-        </span>
-      </footer>
-    </div>
+        )
+      })}
+    </AppShell>
   )
 }

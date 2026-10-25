@@ -1,11 +1,8 @@
 import type { GitSnapshot, ProjectPage as ProjectPageName, ProjectSummary, ProjectViewState } from '@shared/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChangesView } from '../components/ChangesView'
-import { FileBrowser } from '../components/FileBrowser'
-import { SidebarIcon, TerminalIcon } from '../components/icons'
-import { OverviewView } from '../components/OverviewView'
-import { ResizeHandle } from '../components/ResizeHandle'
-import { TerminalView } from '../components/TerminalView'
+import { ProjectContent } from '../components/ProjectContent'
+import { ProjectHeader } from '../components/ProjectHeader'
+import { clampPanelHeight, TerminalPanel, type TerminalTab } from '../components/TerminalPanel'
 import { useModalFocus } from '../hooks/useModalFocus'
 
 interface ProjectPageProps {
@@ -24,33 +21,8 @@ interface ProjectPageProps {
   editorPath: string | null
 }
 
-const NAV_ITEMS: Array<{ key: ProjectPageName; label: string; hint: string }> = [
-  { key: 'overview', label: '概览', hint: 'README 与项目信息' },
-  { key: 'files', label: '文件', hint: '浏览与只读预览' },
-  { key: 'changes', label: '变更', hint: '只读 Git 状态' }
-]
-
-/** 一个终端标签对应一个独立会话 */
-interface TerminalTab {
-  key: number
-  /** 启动目录（相对项目根）；空串表示项目根 */
-  relativePath: string
-  /** 主进程返回的会话 ID；null 表示尚未建立或已结束 */
-  sessionId: string | null
-  /** 重建会话时递增，用于强制重挂载终端组件 */
-  epoch: number
-}
-
-const MIN_PANEL_HEIGHT = 120
 const DEFAULT_PANEL_HEIGHT = 280
 const DEFAULT_PANE_WIDTH = 380
-/** 面板高度上限：始终给头部、导航与底部信息留出空间 */
-const PANEL_RESERVED_HEIGHT = 220
-
-function clampPanelHeight(value: number): number {
-  const max = Math.max(MIN_PANEL_HEIGHT + 60, window.innerHeight - PANEL_RESERVED_HEIGHT)
-  return Math.min(Math.max(Math.round(value), MIN_PANEL_HEIGHT), max)
-}
 
 /**
  * 项目首页框架（设计稿 2.2，M1-3）。
@@ -113,8 +85,6 @@ export function ProjectPage({
   const gitSequenceRef = useRef(0)
 
   const restoredRef = useRef(false)
-  /** 拖拽起点的尺寸快照：拖拽过程中不能读 state，否则会累积误差 */
-  const panelHeightOriginRef = useRef(DEFAULT_PANEL_HEIGHT)
 
   // 恢复视图状态（不恢复进程）
   useEffect(() => {
@@ -344,299 +314,95 @@ export function ProjectPage({
     setPage('files')
   }, [])
 
+  const handleReadmePathChange = useCallback(
+    async (next: string | null) => {
+      const updated = await window.workbench.project.update({ projectId: project.id, readmePath: next })
+      if (updated !== null) onProjectChange(updated)
+    },
+    [onProjectChange, project.id]
+  )
+
+  const handleAllowNetworkImagesChange = useCallback(
+    async (next: boolean) => {
+      const updated = await window.workbench.project.update({ projectId: project.id, allowNetworkImages: next })
+      if (updated !== null) onProjectChange(updated)
+    },
+    [onProjectChange, project.id]
+  )
+
+  const closeTerminalPanel = useCallback(() => {
+    terminalTouchedRef.current = true
+    setTerminalOpen(false)
+    setTerminalMaximized(false)
+  }, [])
+
+  const handleSessionChange = useCallback(
+    (key: number, sessionId: string | null) => updateTab(key, { sessionId }),
+    [updateTab]
+  )
+
   const terminalStateLabel =
     tabs.length === 0 ? '未创建' : runningTabCount > 0 ? `${runningTabCount} 个会话运行中` : `${tabs.length} 个标签`
 
   return (
     <div className="project-page">
-      <header className="project-header">
-        <div className="project-identity">
-          <button
-            type="button"
-            className={sidebarOpen ? 'icon-button active' : 'icon-button'}
-            onClick={onToggleSidebar}
-            title={sidebarOpen ? '收起项目侧边栏（Ctrl+B）' : '展开项目侧边栏（Ctrl+B）'}
-            aria-label={sidebarOpen ? '收起项目侧边栏' : '展开项目侧边栏'}
-            aria-expanded={sidebarOpen}
-          >
-            <SidebarIcon />
-          </button>
-          <button type="button" className="back" onClick={onBack}>
-            ← 项目库
-          </button>
-          <div className="title-block">
-            <h1 title={project.displayName}>{project.displayName}</h1>
-            <p className="project-path" title={project.normalizedIdentity}>
-              {project.normalizedIdentity}
-            </p>
-          </div>
-        </div>
-
-        <div className="segmented" role="tablist" aria-label="项目页面">
-          {NAV_ITEMS.map((item) => (
-            <button
-              type="button"
-              key={item.key}
-              role="tab"
-              id={`seg-tab-${item.key}`}
-              aria-selected={page === item.key}
-              aria-controls="page-panel"
-              className={page === item.key ? 'active' : undefined}
-              onClick={() => setPage(item.key)}
-              title={item.hint}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="project-badges">
-          {project.isGitRepository === true ? <span className="chip chip-git">Git 仓库</span> : null}
-          {project.isGitRepository === false ? <span className="chip">普通目录</span> : null}
-          {project.isGitRepository === null ? <span className="chip chip-warn">Git 不可用</span> : null}
-          {project.isGitRepository === true && gitSnapshot !== null ? (
-            gitSnapshot.stale || gitSnapshot.error !== null ? (
-              <span className="chip chip-warn" title={gitSnapshot.error ?? 'Git 状态查询失败或已过期'}>
-                Git 状态不可用
-              </span>
-            ) : (
-              <>
-                <span
-                  className="chip"
-                  title={gitSnapshot.branch === null ? '尚无分支提交' : `当前分支：${gitSnapshot.branch}`}
-                >
-                  分支 {gitSnapshot.branch ?? '（无分支）'}
-                </span>
-                <span className="chip">
-                  变更 {new Set(gitSnapshot.entries.map((entry) => entry.relativePath)).size}
-                </span>
-              </>
-            )
-          ) : null}
-          <button
-            type="button"
-            className={project.trusted ? 'chip chip-trusted' : 'chip'}
-            onClick={() => void toggleTrust()}
-            title="不可信项目默认只读浏览；信任后才允许创建终端与删除等写操作"
-          >
-            {project.trusted ? '已信任（点击改为只读）' : '只读浏览（点击信任）'}
-          </button>
-          {/*
-            终端主按钮（界面重构三项·阶段 4）：本项目不是单纯的项目管理器，
-            终端与文件／预览同级。运行态用角标标出，没有会话时按钮就是创建入口。
-          */}
-          <button
-            type="button"
-            className={terminalOpen ? 'terminal-toggle active' : 'terminal-toggle'}
-            onClick={toggleTerminal}
-            aria-pressed={terminalOpen}
-            title={
-              tabs.length === 0
-                ? project.trusted
-                  ? '新建终端会话（Ctrl+`）'
-                  : '创建终端前需要先信任该项目'
-                : terminalOpen
-                  ? '收起终端面板（Ctrl+`，不结束会话）'
-                  : '展开终端面板（Ctrl+`）'
-            }
-          >
-            <TerminalIcon />
-            <span className="terminal-toggle-label">终端</span>
-            <span className={runningTabCount > 0 ? 'terminal-badge live' : 'terminal-badge'}>{terminalStateLabel}</span>
-          </button>
-          <button type="button" onClick={() => void window.workbench.project.reveal({ projectId: project.id })}>
-            在资源管理器中打开
-          </button>
-        </div>
-      </header>
+      <ProjectHeader
+        project={project}
+        page={page}
+        gitSnapshot={gitSnapshot}
+        sidebarOpen={sidebarOpen}
+        terminalOpen={terminalOpen}
+        terminalStateLabel={terminalStateLabel}
+        runningTabCount={runningTabCount}
+        tabCount={tabs.length}
+        onToggleSidebar={onToggleSidebar}
+        onBack={onBack}
+        onPageChange={setPage}
+        onToggleTrust={() => void toggleTrust()}
+        onToggleTerminal={toggleTerminal}
+        onReveal={() => void window.workbench.project.reveal({ projectId: project.id })}
+      />
 
       {!project.available ? <p className="inline-error">{project.unavailableReason ?? '项目目录当前不可用'}</p> : null}
 
-      <main
-        className="project-content"
-        role="tabpanel"
-        id="page-panel"
-        aria-labelledby={`seg-tab-${page}`}
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-      >
-        {page === 'overview' ? (
-          <OverviewView
-            projectId={project.id}
-            readmePath={project.readmePath}
-            allowNetworkImages={project.allowNetworkImages}
-            onReadmePathChange={async (next) => {
-              const updated = await window.workbench.project.update({
-                projectId: project.id,
-                readmePath: next
-              })
-              if (updated !== null) onProjectChange(updated)
-            }}
-            onAllowNetworkImagesChange={async (next) => {
-              const updated = await window.workbench.project.update({
-                projectId: project.id,
-                allowNetworkImages: next
-              })
-              if (updated !== null) onProjectChange(updated)
-            }}
-            onNavigateProjectPath={handleNavigateProjectPath}
-          />
-        ) : null}
-
-        {page === 'files' && restored ? (
-          <FileBrowser
-            projectId={project.id}
-            trusted={project.trusted}
-            editorPath={editorPath}
-            initialPath={filePath}
-            paneWidth={filesPaneWidth}
-            refreshToken={changeToken}
-            onPaneWidthChange={setFilesPaneWidth}
-            onPathChange={setFilePath}
-            onNavigateProjectPath={handleNavigateProjectPath}
-            onOpenTerminalAt={openTerminalAt}
-          />
-        ) : null}
-
-        {page === 'changes' ? (
-          <ChangesView projectId={project.id} isGitRepository={project.isGitRepository} refreshToken={changeToken} />
-        ) : null}
-      </main>
+      <ProjectContent
+        project={project}
+        page={page}
+        restored={restored}
+        filePath={filePath}
+        filesPaneWidth={filesPaneWidth}
+        changeToken={changeToken}
+        editorPath={editorPath}
+        onScrollTopChange={setScrollTop}
+        onReadmePathChange={handleReadmePathChange}
+        onAllowNetworkImagesChange={handleAllowNetworkImagesChange}
+        onNavigateProjectPath={handleNavigateProjectPath}
+        onPaneWidthChange={setFilesPaneWidth}
+        onPathChange={setFilePath}
+        onOpenTerminalAt={openTerminalAt}
+      />
 
       {terminalMounted ? (
-        <section
-          className={
-            terminalOpen ? (terminalMaximized ? 'terminal-panel maximized' : 'terminal-panel') : 'terminal-panel closed'
-          }
-          style={terminalOpen && !terminalMaximized ? { height: panelHeight } : undefined}
-        >
-          {/* 上边缘拖拽调整高度，不使用滑动条；全屏态高度由布局决定，不提供拖拽 */}
-          {terminalMaximized ? null : (
-            <ResizeHandle
-              axis="y"
-              className="terminal-resize"
-              ariaLabel="拖拽调整终端面板高度"
-              onDragStart={() => {
-                panelHeightOriginRef.current = panelHeight
-              }}
-              onDrag={(delta) => setPanelHeight(clampPanelHeight(panelHeightOriginRef.current - delta))}
-              onDragEnd={() => {
-                // 高度在拖拽过程中已实时更新，去抖保存会自动落盘
-              }}
-            />
-          )}
-
-          <header className="terminal-header">
-            <div className="terminal-title">
-              <strong>终端</strong>
-              <span className="chip">{project.displayName}</span>
-              {runningTabCount > 0 ? (
-                <span className="badge badge-live">{runningTabCount} 个会话运行中</span>
-              ) : (
-                <span className="badge">无活动会话</span>
-              )}
-            </div>
-            <div className="terminal-actions">
-              {activeTab !== null && activeTab.sessionId === null ? (
-                <button type="button" onClick={() => restartTab(activeTab.key)} title="在当前标签内重新建立会话">
-                  重建会话
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => openTerminalAt('')}
-                title="新建一个终端标签（每个标签一个独立会话）"
-                aria-label="新建终端标签"
-              >
-                新建标签
-              </button>
-              <button
-                type="button"
-                onClick={toggleMaximized}
-                title={terminalMaximized ? '还原为面板' : '全屏：终端吃满主区域'}
-                aria-pressed={terminalMaximized}
-              >
-                {terminalMaximized ? '还原' : '全屏'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  terminalTouchedRef.current = true
-                  setTerminalOpen(false)
-                  setTerminalMaximized(false)
-                }}
-                title="收起终端面板，会话继续在后台运行"
-              >
-                收起
-              </button>
-              {activeTab !== null && activeTab.sessionId !== null ? (
-                <button
-                  type="button"
-                  className="danger"
-                  onClick={endActiveSession}
-                  title="结束当前标签的会话（其中的命令会被中断）"
-                >
-                  结束会话
-                </button>
-              ) : null}
-            </div>
-          </header>
-
-          {/* 标签条：切换标签不终止其它会话 */}
-          <div className="terminal-tabs" role="tablist" aria-label="终端标签">
-            {tabs.map((tab) => {
-              const isActive = tab.key === activeTabKey
-              const label = tab.relativePath.length > 0 ? tab.relativePath : '项目根目录'
-              return (
-                <div key={tab.key} className={isActive ? 'terminal-tab active' : 'terminal-tab'}>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={isActive}
-                    className="terminal-tab-label"
-                    onClick={() => setActiveTabKey(tab.key)}
-                    title={`启动目录：${label}\n${tab.sessionId !== null ? '会话运行中' : '无活动会话'}`}
-                  >
-                    <span className={tab.sessionId !== null ? 'tab-dot live' : 'tab-dot'} aria-hidden="true" />
-                    {label}
-                  </button>
-                  <button
-                    type="button"
-                    className="terminal-tab-close"
-                    onClick={() => closeTab(tab.key)}
-                    title="关闭标签（会结束该会话）"
-                    aria-label={`关闭标签 ${label}`}
-                  >
-                    ×
-                  </button>
-                </div>
-              )
-            })}
-            <button
-              type="button"
-              className="terminal-tab-add"
-              onClick={() => openTerminalAt('')}
-              title="新建标签"
-              aria-label="新建标签"
-            >
-              +
-            </button>
-          </div>
-
-          {tabs.map((tab) => (
-            <div
-              key={`${tab.key}-${tab.epoch}`}
-              className={terminalOpen && tab.key === activeTabKey ? 'terminal-host-wrap' : 'terminal-host-wrap hidden'}
-            >
-              <TerminalView
-                projectId={project.id}
-                relativePath={tab.relativePath}
-                visible={terminalOpen && tab.key === activeTabKey}
-                shell={defaultShell}
-                onSessionChange={(sessionId) => updateTab(tab.key, { sessionId })}
-              />
-            </div>
-          ))}
-        </section>
+        <TerminalPanel
+          projectId={project.id}
+          projectName={project.displayName}
+          defaultShell={defaultShell}
+          tabs={tabs}
+          activeTabKey={activeTabKey}
+          terminalOpen={terminalOpen}
+          terminalMaximized={terminalMaximized}
+          panelHeight={panelHeight}
+          runningTabCount={runningTabCount}
+          onPanelHeightChange={setPanelHeight}
+          onToggleMaximized={toggleMaximized}
+          onClosePanel={closeTerminalPanel}
+          onOpenTerminalAt={openTerminalAt}
+          onRestartTab={restartTab}
+          onEndActiveSession={endActiveSession}
+          onSelectTab={setActiveTabKey}
+          onCloseTab={closeTab}
+          onSessionChange={handleSessionChange}
+        />
       ) : null}
 
       {trustPrompt ? (
