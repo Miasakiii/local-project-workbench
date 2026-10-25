@@ -8,6 +8,7 @@ import {
   isInside,
   isProtectedEntry,
   isSameLocation,
+  rejectionForRealpathError,
   resolveProjectPath
 } from '../../src/main/security/path-guard'
 
@@ -113,6 +114,16 @@ test('resolveProjectPath 拒绝经目录联接指向项目外', (t) => {
   assert.equal(result.ok, false)
   assert.equal(result.viaReparsePoint, true)
   assert.equal(result.rejection, 'outside-project')
+})
+
+test('真实路径解析失败按错误码区分不存在、无权限与 I/O 失败', () => {
+  assert.equal(rejectionForRealpathError('ENOENT', 'not-found'), 'not-found')
+  assert.equal(rejectionForRealpathError('ENOTDIR', 'not-found'), 'not-found')
+  assert.equal(rejectionForRealpathError('EPERM', 'not-found'), 'permission-denied')
+  assert.equal(rejectionForRealpathError('EACCES', 'not-found'), 'permission-denied')
+  assert.equal(rejectionForRealpathError('ELOOP', 'not-found'), 'io-error')
+  assert.equal(rejectionForRealpathError(null, 'not-found'), 'io-error')
+  assert.equal(rejectionForRealpathError('ENOENT', 'io-error'), 'io-error')
 })
 
 test('isSameLocation 以真实路径判断同一位置', (t) => {

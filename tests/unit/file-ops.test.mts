@@ -56,9 +56,11 @@ test('路径拒绝原因与文案保持既有映射', () => {
   assert.equal(reasonForRejection('traversal'), 'outside-project')
   assert.equal(reasonForRejection('outside-project'), 'outside-project')
   assert.equal(reasonForRejection('not-found'), 'not-found')
+  assert.equal(reasonForRejection('permission-denied'), 'permission-denied')
   assert.equal(reasonForRejection('ads'), 'invalid-path')
   assert.match(messageForRejection('unc', '\\\\srv\\share'), /UNC/)
   assert.match(messageForRejection('traversal', '../x'), /项目之外/)
+  assert.match(messageForRejection('permission-denied', 'x'), /没有权限/)
 })
 
 test('errno 在回收站与写目标两种语境下含义不同', () => {

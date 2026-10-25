@@ -45,6 +45,8 @@ export function reasonForRejection(rejection: FileRejection): FileOperationReaso
       return 'outside-project'
     case 'not-found':
       return 'not-found'
+    case 'permission-denied':
+      return 'permission-denied'
     default:
       return 'invalid-path'
   }
@@ -61,6 +63,8 @@ export function messageForRejection(rejection: FileRejection, relativePath: stri
       return `不接受绝对路径、盘符或 UNC 写法，未执行：${relativePath}`
     case 'not-found':
       return `目标不存在：${relativePath}`
+    case 'permission-denied':
+      return `没有权限访问目标，未执行：${relativePath}`
     default:
       return `路径不合法，未执行：${relativePath}`
   }

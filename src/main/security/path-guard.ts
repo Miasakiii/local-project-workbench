@@ -36,6 +36,7 @@ export type PathRejection =
   | 'trailing-dot-or-space'
   | 'outside-project'
   | 'not-found'
+  | 'permission-denied'
   | 'not-directory'
   | 'not-file'
   | 'io-error'
@@ -148,12 +149,33 @@ export function checkRelativeShape(input: unknown): ShapeCheck {
   return { ok: true, normalized: segments.join('/'), rejection: null, detail: '形态检查通过' }
 }
 
-function safeRealpath(target: string): { ok: true; path: string } | { ok: false; detail: string } {
+function safeRealpath(
+  target: string
+): { ok: true; path: string } | { ok: false; detail: string; code: string | null } {
   try {
     return { ok: true, path: realpathSync.native(target) }
   } catch (error) {
-    return { ok: false, detail: error instanceof Error ? error.message : String(error) }
+    const code = (error as NodeJS.ErrnoException | null)?.code
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      code: typeof code === 'string' ? code : null
+    }
   }
+}
+
+/**
+ * 真实路径解析失败时的拒绝码。
+ *
+ * Windows 上对目标写入 DENY(DELETE) 后，`realpathSync.native` 会以 `EPERM`
+ * 失败，而不是目标不存在；把权限拒绝统一报成 `not-found` 会让用户误以为
+ * 文件已被移走。只有在确认 `ENOENT`/`ENOTDIR` 时才使用调用方给定的
+ * 「不存在」拒绝码，其余未知错误按 I/O 失败处理。
+ */
+export function rejectionForRealpathError(code: string | null, missing: PathRejection): PathRejection {
+  if (code === 'EACCES' || code === 'EPERM') return 'permission-denied'
+  if (code === 'ENOENT' || code === 'ENOTDIR') return missing
+  return 'io-error'
 }
 
 /**
@@ -219,13 +241,17 @@ export function resolveProjectPath(
 
   const rootReal = safeRealpath(projectRoot)
   if (!rootReal.ok) {
+    const rejection = rejectionForRealpathError(rootReal.code, 'io-error')
     return {
       ok: false,
       absolutePath: null,
       normalized: shape.normalized,
       viaReparsePoint: false,
-      rejection: 'io-error',
-      detail: `项目根目录不可解析：${rootReal.detail}`
+      rejection,
+      detail:
+        rejection === 'permission-denied'
+          ? `没有权限访问项目根目录：${rootReal.detail}`
+          : `项目根目录不可解析：${rootReal.detail}`
     }
   }
 
@@ -237,13 +263,19 @@ export function resolveProjectPath(
   if (targetReal.ok) {
     effectiveReal = targetReal.path
   } else if (options.mustExist) {
+    const rejection = rejectionForRealpathError(targetReal.code, 'not-found')
     return {
       ok: false,
       absolutePath: null,
       normalized: shape.normalized,
       viaReparsePoint,
-      rejection: 'not-found',
-      detail: `目标不存在：${shape.normalized}`
+      rejection,
+      detail:
+        rejection === 'not-found'
+          ? `目标不存在：${shape.normalized}`
+          : rejection === 'permission-denied'
+            ? `没有权限访问目标：${shape.normalized}`
+            : `目标路径不可解析：${shape.normalized}（${targetReal.detail}）`
     }
   } else {
     // 目标尚不存在：解析最近的已存在祖先，再拼回剩余片段
@@ -259,10 +291,23 @@ export function resolveProjectPath(
         resolved = step.path
         remaining.length = 0
       } else {
-        for (let rest = index; rest < segments.length; rest += 1) {
-          remaining.push(segments[rest] as string)
+        const rejection = rejectionForRealpathError(step.code, 'not-found')
+        if (rejection === 'not-found') {
+          for (let rest = index; rest < segments.length; rest += 1) {
+            remaining.push(segments[rest] as string)
+          }
+          break
         }
-        break
+        // 无法解析祖先真实路径时不能按字符串拼接继续：链接是否指向项目外
+        // 尚未得到确认，继续会让写操作越过归属检查。
+        return {
+          ok: false,
+          absolutePath: null,
+          normalized: shape.normalized,
+          viaReparsePoint,
+          rejection,
+          detail: `无法确认目标路径的实际位置：${shape.normalized}（${step.detail}）`
+        }
       }
     }
 

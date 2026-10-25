@@ -21,11 +21,12 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const ROOT = path.join(__dirname, '..')
-const RELEASE = path.join(ROOT, 'release')
 
 /** 允许用 --dir=<路径> 指定其它产物目录（默认 release/win-unpacked）。 */
 const dirArg = process.argv.find((item) => item.startsWith('--dir='))
-const UNPACKED = dirArg === undefined ? path.join(RELEASE, 'win-unpacked') : path.resolve(dirArg.slice(6))
+const UNPACKED = dirArg === undefined ? path.join(ROOT, 'release', 'win-unpacked') : path.resolve(dirArg.slice(6))
+/** 安装包与解包目录同属一个输出目录；--dir 指向其它位置时随之切换。 */
+const RELEASE = path.dirname(UNPACKED)
 
 /** 可选体积门槛（MB）；超限以退出码 1 失败。 */
 function readLimit(prefix) {

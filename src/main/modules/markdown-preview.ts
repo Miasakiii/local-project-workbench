@@ -124,6 +124,8 @@ function describeRejection(rejection: PreviewRejection, target: string): string 
       return `路径不合法，已阻止：${target}`
     case 'not-found':
       return `目标不存在：${target}`
+    case 'permission-denied':
+      return `没有权限访问目标：${target}`
     case 'not-directory':
     case 'not-file':
       return `目标类型不符：${target}`
