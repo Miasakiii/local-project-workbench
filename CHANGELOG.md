@@ -133,7 +133,7 @@
 
 - 隔离身份（独立 appId / 快捷方式）静默安装退出码 0，安装目录产物齐全、快捷方式指向正确，安装后打包产物验证 12/12；`/S /currentuser` 静默卸载退出码 0，安装目录、测试快捷方式与测试注册表项全部清除。
 - 用户数据保留：卸载前后 61 个文件、8,286,887 字节逐一 SHA-256 比对 0 差异，标记文件保留。
-- 0.3.0 本机同步：覆盖安装到 `F:\sud\local-project-workbench`，安装版本 0.3.0、主程序哈希与发布构建一致、安装目录验证 12/12；安装前后用户数据 61 个文件、8,286,887 字节的聚合 SHA-256 完全一致。
+- 0.3.0 本机同步：从 [GitHub Release v0.3.0](https://github.com/Miasakiii/local-project-workbench/releases/tag/v0.3.0) 下载正式安装包并覆盖安装到 `F:\sud\local-project-workbench`；安装版本 0.3.0、安装目录验证 12/12，发布安装包 SHA-256 为 `c45e4af78accc8a5ff2a4417e4764510dfe29d250fc62616a8571c0348e42c75`。安装前后用户数据 61 个文件、8,286,887 字节的聚合 SHA-256 完全一致。
 - 体积门禁：解包 328.4 MB ≤ 340 MB，安装包 100.5 MB ≤ 110 MB，语言包 2 个共 1.1 MB。
 - 签名：0.3.0 安装包、主程序与 `elevate.exe` 均为 `NotSigned`（SHA-256 已记入 README），SmartScreen 风险明确；未配置证书时不对外宣称为已签名分发。
 - `verify:release` 新增 `--output=<目录>`，可在工作区外完成打包与验证（宿主占用 `app.asar` 时仍可执行）。

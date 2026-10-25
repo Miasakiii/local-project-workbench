@@ -93,7 +93,7 @@ npm run pack:win
 release/local-project-workbench-0.3.0-setup.exe /S /D=C:\Apps\local-project-workbench
 ```
 
-发布由推送 `v<version>` 标签触发 [release.yml](.github/workflows/release.yml)：自动验证、打包、生成 `SHA256SUMS.txt` 并创建 Release。未配置签名证书时产物为未签名安装包，Windows SmartScreen 可能提示。
+发布由推送 `v<version>` 标签触发 [release.yml](.github/workflows/release.yml)：自动验证、打包、生成 `SHA256SUMS.txt` 并创建 Release。最新正式版为 [v0.3.0](https://github.com/Miasakiii/local-project-workbench/releases/tag/v0.3.0)。未配置签名证书时产物为未签名安装包，Windows SmartScreen 可能提示。
 
 ### 首次使用
 
@@ -392,7 +392,7 @@ npm run pack:win         # 生成 NSIS 安装包（≤ 110 MB 体积门槛，实
 
 **安装与卸载**（per-user 安装、`oneClick: false`、可改安装目录）：P5 以隔离身份（独立 appId 与快捷方式）静默安装到临时目录，退出码 0，安装目录产物齐全、快捷方式指向正确，安装后 `verify:packaged` **12/12**；`/S /currentuser` 静默卸载退出码 0，安装目录、测试快捷方式与测试注册表项全部清除，用户数据目录（`%APPDATA%\local-project-workbench`）保留。0.3.0 已覆盖安装本机 `F:\sud\local-project-workbench`：安装版本为 0.3.0，主程序 SHA-256 与发布构建一致，安装后产物验证 **12/12**；安装前后用户数据均为 61 个文件、8,286,887 字节，聚合 SHA-256 **0 差异**。
 
-**发布与签名：** 推送 `v<version>` 标签触发 `.github/workflows/release.yml`：先运行 `verify:all`，再 `pack:win`，校验标签与 `package.json` 版本一致，生成 `release/SHA256SUMS.txt`，最后用 `gh release create` 创建 GitHub Release。代码签名通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 仓库 secrets 启用；未配置时产物未签名。0.3.0 实测安装包、主程序与 `elevate.exe` 均为 `NotSigned`（SHA-256：安装包 `19C9D0C798D4954BA635C5D45E1EB6C317CC1199A91E4C2464EDE1E475B799E8`，主程序 `8C52844A28CAA006E5AF89E3A0E04764C4B1D73C0DEE2516A54A6A1F9EBE9911`，`elevate.exe` `9B1FBF0C11C520AE714AF8AA9AF12CFD48503EEDECD7398D8992EE94D1B4DC37`），Windows SmartScreen 会提示未知发布者；对外分发前需配置证书。当前未接入 electron-updater，`publish: null` + `--publish never` 不生成也不上传 `latest.yml` / `app-update.yml`；接入自动更新时再改 GitHub provider，并保持 ASCII `artifactName`。
+**发布与签名：** 推送 `v<version>` 标签触发 `.github/workflows/release.yml`：先运行 `verify:all`，再 `pack:win`，校验标签与 `package.json` 版本一致，生成 `release/SHA256SUMS.txt`，最后用 `gh release create` 创建 GitHub Release。代码签名通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 仓库 secrets 启用；未配置时产物未签名。0.3.0 正式发布资产、主程序与 `elevate.exe` 均为 `NotSigned`（SHA-256：GitHub Release 安装包 `c45e4af78accc8a5ff2a4417e4764510dfe29d250fc62616a8571c0348e42c75`，安装后主程序 `e769725523133194982e86bf7bf3b637b52c57cddc10047848cb20327e0b7278`，`elevate.exe` `9B1FBF0C11C520AE714AF8AA9AF12CFD48503EEDECD7398D8992EE94D1B4DC37`），Windows SmartScreen 会提示未知发布者；对外分发前需配置证书。当前未接入 electron-updater，`publish: null` + `--publish never` 不生成也不上传 `latest.yml` / `app-update.yml`；接入自动更新时再改 GitHub provider，并保持 ASCII `artifactName`。
 
 **应用图标**：安装包、任务栏、窗口标题栏与资源管理器图标由 `scripts/build-icon.mjs` 程序化生成（`build/icon.ico`，解析几何 + 4×4 超采样抗锯齿，256/48/32/16 四个尺寸，RGBA）。`pack:dir`／`pack:win` 会先跑 `node scripts/build-icon.mjs` 再交给 electron-builder（`win.icon: build/icon.ico`）；也可单独执行 `npm run build:icon` 预览。构图是 **45° 切角方底**（品牌蓝渐变，切角处透明）+ 白窗（标题栏三钮）+ 终端提示符 `>_`。**换设计师稿时直接替换 `build/icon.ico` 即可**，脚本与 `electron-builder.yml` 的指向不变。
 
