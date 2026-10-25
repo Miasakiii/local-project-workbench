@@ -2,16 +2,16 @@
 #
 # 体积取舍原则：只删除「在 Windows x64 上不可能被加载」的文件，不为体积牺牲功能路径。
 # 因此明确保留以下几项，尽管它们体积可观：
-#   - dxcompiler.dll / dxil.dll（27 MB）：WebGPU(Dawn) 与 D3D12 着色器编译。
+#   - dxcompiler.dll / dxil.dll（26 MB）：WebGPU(Dawn) 与 D3D12 着色器编译。
 #     本应用不使用 WebGPU，但 GPU 进程初始化可能依赖它们。2026-10-25 已在
 #     NVIDIA RTX 4060（D3D11）与 SwiftShader 两条路径分别复验打包产物 12/12；
 #     「两条路径均正常」仍不足以证明二者永不被加载，故保留。
-#   - vk_swiftshader.dll / vulkan-1.dll（7 MB）：无可用 GPU 时的软件渲染兜底。
+#   - vk_swiftshader.dll / vulkan-1.dll（6.2 MB）：无可用 GPU 时的软件渲染兜底。
 #     裁掉会让「显卡不可用」的机器直接渲染失败。
 #   - ffmpeg.dll（3 MB）：媒体解码。
-#   - chrome_200_percent.pak（2 MB）：HiDPI 缩放。
-#   - LICENSES.chromium.html（20 MB）：Chromium 第三方许可证，属分发合规要求。
-# 如需进一步压缩，见 README「分发体积」一节的取舍说明。
+#   - chrome_200_percent.pak（1.2 MB）：HiDPI 缩放。
+#   - LICENSES.chromium.html（19.5 MB）：Chromium 第三方许可证，属分发合规要求。
+# 如需进一步压缩，见 README「分发与打包」一节的取舍说明。
 
 appId: com.miasakii.local-project-workbench
 productName: 本地项目工作台
@@ -40,7 +40,7 @@ files:
   - package.json
   # node-pty 的调试符号运行时永不加载，四个平台的 prebuilds 里共占 54 MB
   - '!**/node_modules/node-pty/prebuilds/**/*.pdb'
-  # 只发 Windows x64：剔除 arm64 与 macOS 预编译产物（共 30 MB）
+  # 只发 Windows x64：剔除 arm64 与 macOS 预编译产物（共 32 MB）
   - '!**/node_modules/node-pty/prebuilds/win32-arm64/**'
   - '!**/node_modules/node-pty/prebuilds/darwin-*/**'
   # ConPTY 的第三方运行时同样按架构分发，只保留 x64
