@@ -3,8 +3,9 @@
 # 体积取舍原则：只删除「在 Windows x64 上不可能被加载」的文件，不为体积牺牲功能路径。
 # 因此明确保留以下几项，尽管它们体积可观：
 #   - dxcompiler.dll / dxil.dll（27 MB）：WebGPU(Dawn) 与 D3D12 着色器编译。
-#     本应用不使用 WebGPU，但 GPU 进程初始化可能依赖它们；本机为软件渲染环境，
-#     无法验证硬件 GPU 路径，故不裁剪。
+#     本应用不使用 WebGPU，但 GPU 进程初始化可能依赖它们。2026-10-25 已在
+#     NVIDIA RTX 4060（D3D11）与 SwiftShader 两条路径分别复验打包产物 12/12；
+#     「两条路径均正常」仍不足以证明二者永不被加载，故保留。
 #   - vk_swiftshader.dll / vulkan-1.dll（7 MB）：无可用 GPU 时的软件渲染兜底。
 #     裁掉会让「显卡不可用」的机器直接渲染失败。
 #   - ffmpeg.dll（3 MB）：媒体解码。
