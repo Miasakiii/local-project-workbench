@@ -1,3 +1,4 @@
+import { TERMINAL_SHELL_CHOICES, type TerminalShellChoice } from '@shared/terminal-settings'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -8,9 +9,9 @@ export interface ShellSpec {
 }
 
 /** 渲染层可指定的 shell 白名单（设计稿 6.1：pwsh／PowerShell／cmd，不假定 Git Bash） */
-export type ShellChoice = 'pwsh' | 'powershell' | 'cmd'
+export type ShellChoice = TerminalShellChoice
 
-export const SHELL_CHOICES: readonly ShellChoice[] = ['pwsh', 'powershell', 'cmd']
+export const SHELL_CHOICES: readonly ShellChoice[] = TERMINAL_SHELL_CHOICES
 
 export interface ResolveShellOptions {
   platform?: NodeJS.Platform

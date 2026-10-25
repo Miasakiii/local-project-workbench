@@ -44,7 +44,7 @@ export function registerAppIpc(ctx: IpcContext): void {
       projectId: view.projectId,
       notice: view.notice,
       editorPath: settings.editorPath,
-      defaultShell: settings.defaultShell
+      terminal: settings.terminal
     }
   })
 
@@ -57,7 +57,7 @@ export function registerAppIpc(ctx: IpcContext): void {
     const patch = request !== null && typeof request === 'object' ? request : {}
     return ctx.settings().update({
       restoreLastProject: typeof patch.restoreLastProject === 'boolean' ? patch.restoreLastProject : undefined,
-      defaultShell: typeof patch.defaultShell === 'string' ? patch.defaultShell : undefined
+      terminal: patch.terminal !== null && typeof patch.terminal === 'object' ? patch.terminal : undefined
     })
   })
 }

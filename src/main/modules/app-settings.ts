@@ -1,4 +1,10 @@
 import type { SettingsResult } from '@shared/ipc'
+import {
+  DEFAULT_TERMINAL_PREFERENCES,
+  mergeTerminalPreferences,
+  sanitizeTerminalPreferences,
+  type TerminalPreferences
+} from '@shared/terminal-settings'
 import { JsonStore } from '../storage/json-store'
 import { SHELL_CHOICES } from './shell-select'
 
@@ -9,7 +15,7 @@ import { SHELL_CHOICES } from './shell-select'
  * - `restoreLastProject`：开关，**默认关闭**；
  * - `lastProjectId`：上次活跃于哪个项目，由主进程在用户打开项目时记录；
  * - `editorPath`：「用指定编辑器打开」所用的编辑器可执行路径（设计稿 4.2，G3b）；
- * - `defaultShell`：终端默认 Shell，空串=按本机自动探测（界面重构三项·阶段 2）。
+ * - `terminal`：终端偏好全集（P4），逐字段校验后原子写入。
  *
  * 刻意与 `projects.json` 分开存放：这些是应用属性，不是项目属性。移除登记、
  * 重新定位都不该改动它们——能否恢复由启动那一刻的实际情况决定，见 `decideStartupView`。
@@ -35,11 +41,15 @@ function sanitizeSettings(raw: unknown): SettingsResult | null {
   if (!isRecord(raw)) return null
   const last = raw['lastProjectId']
   const editor = raw['editorPath']
+  // 兼容 P4 之前的扁平 defaultShell：首次升级时保留用户已选的 Shell，其余终端字段取默认值。
+  const terminalRaw = isRecord(raw['terminal'])
+    ? raw['terminal']
+    : { defaultShell: sanitizeDefaultShell(raw['defaultShell']) }
   return {
     restoreLastProject: raw['restoreLastProject'] === true,
     lastProjectId: typeof last === 'string' && last.length > 0 ? last : null,
     editorPath: typeof editor === 'string' && editor.length > 0 ? editor : null,
-    defaultShell: sanitizeDefaultShell(raw['defaultShell'])
+    terminal: sanitizeTerminalPreferences(terminalRaw)
   }
 }
 
@@ -94,13 +104,16 @@ export class AppSettingsStore {
   /**
    * 局部更新应用偏好：只改调用方显式给出的字段，其余保持原值。
    *
-   * 每个字段各自过 sanitize（`restoreLastProject` 归一为布尔、`defaultShell` 过白名单），
-   * 因此渲染层传来的值只是候选，落盘的永远是校验过的值。
+   * `restoreLastProject` 归一为布尔；终端偏好逐字段过 `sanitizeTerminalPreferences`。
+   * 渲染层传来的值只是候选，落盘的永远是校验过的值。
    */
-  update(patch: { restoreLastProject?: boolean; defaultShell?: string }): SettingsResult {
-    const next: SettingsResult = { ...this.get() }
+  update(patch: { restoreLastProject?: boolean; terminal?: Partial<TerminalPreferences> }): SettingsResult {
+    const current = this.get()
+    const next: SettingsResult = {
+      ...current,
+      terminal: mergeTerminalPreferences(current.terminal, patch.terminal)
+    }
     if (patch.restoreLastProject !== undefined) next.restoreLastProject = patch.restoreLastProject === true
-    if (patch.defaultShell !== undefined) next.defaultShell = sanitizeDefaultShell(patch.defaultShell)
     this.store.write(next)
     return next
   }
@@ -167,7 +180,12 @@ export function createSettingsStore(filePath: string): AppSettingsStore {
       filePath,
       version: STORE_VERSION,
       sanitize: sanitizeSettings,
-      createDefault: () => ({ restoreLastProject: false, lastProjectId: null, editorPath: null, defaultShell: '' })
+      createDefault: () => ({
+        restoreLastProject: false,
+        lastProjectId: null,
+        editorPath: null,
+        terminal: { ...DEFAULT_TERMINAL_PREFERENCES }
+      })
     })
   )
 }

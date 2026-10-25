@@ -1,3 +1,8 @@
+import {
+  DEFAULT_TERMINAL_PREFERENCES,
+  sanitizeTerminalPreferences,
+  type TerminalPreferences
+} from '@shared/terminal-settings'
 import type { AppInfo, ProjectSummary } from '@shared/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppShell } from './components/AppShell'
@@ -65,8 +70,11 @@ export default function App(): React.JSX.Element {
   const [restoreLastProject, setRestoreLastProject] = useState(false)
   /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（G3b） */
   const [editorPath, setEditorPath] = useState<string | null>(null)
-  /** 终端默认 Shell；空串=按本机自动探测（界面重构三项·阶段 2，设置页承载） */
-  const [defaultShell, setDefaultShell] = useState('')
+  /** 终端偏好（P4）：设置页与终端面板共用；外观即时生效，Shell／目录只影响新会话 */
+  const [terminalSettings, setTerminalSettings] = useState<TerminalPreferences>(DEFAULT_TERMINAL_PREFERENCES)
+  const terminalSettingsRef = useRef<TerminalPreferences>(DEFAULT_TERMINAL_PREFERENCES)
+  /** 字号滚轮等连续操作会高频触发，落盘做 300ms 合并；退出确认前强制冲刷 */
+  const terminalSaveTimerRef = useRef<number | null>(null)
   /** 设置页是否为当前主区域视图；打开项目仍保持挂载，设置与项目可随时来回切换 */
   const [settingsOpen, setSettingsOpen] = useState(false)
   const { dialogRef: closeDialogRef } = useModalFocus(pendingCloseProjectId !== null, () =>
@@ -180,7 +188,8 @@ export default function App(): React.JSX.Element {
     const view = await window.workbench.app.startupView()
     setRestoreLastProject(view.restoreLastProject)
     setEditorPath(view.editorPath)
-    setDefaultShell(view.defaultShell)
+    setTerminalSettings(view.terminal)
+    terminalSettingsRef.current = view.terminal
     const target = view.projectId
     if (target !== null && list.some((project) => project.id === target)) {
       await activateProject(target)
@@ -195,17 +204,45 @@ export default function App(): React.JSX.Element {
   }, [bootstrap])
 
   /**
-   * 局部更新应用偏好：只提交动过的那一项，其余字段由主进程保持原值。
-   * 落盘值以主进程返回为准（白名单与序列化都在主进程）。
+   * 「恢复上次项目」开关：立即提交，落盘值以主进程返回为准。
    */
-  const updateSettings = useCallback(async (patch: { restoreLastProject?: boolean; defaultShell?: string }) => {
+  const updateSettings = useCallback(async (patch: { restoreLastProject?: boolean }) => {
     try {
       const saved = await window.workbench.settings.update(patch)
       setRestoreLastProject(saved.restoreLastProject)
-      setDefaultShell(saved.defaultShell)
     } catch (error) {
       // 偏好写不进去必须说出来：否则开关会在界面上「假生效」，下次启动又回到旧值
       setFatalError(`设置保存失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }, [])
+
+  /**
+   * 终端偏好局部更新：先做与主进程同源的校验，立即反映到界面，再合并落盘。
+   * 校验失败不会把非法值写进状态；主进程仍会独立复核一次。
+   */
+  const applyTerminalSettings = useCallback((patch: Partial<TerminalPreferences>) => {
+    const next = sanitizeTerminalPreferences({ ...terminalSettingsRef.current, ...patch })
+    terminalSettingsRef.current = next
+    setTerminalSettings(next)
+    if (terminalSaveTimerRef.current !== null) window.clearTimeout(terminalSaveTimerRef.current)
+    terminalSaveTimerRef.current = window.setTimeout(() => {
+      terminalSaveTimerRef.current = null
+      void window.workbench.settings.update({ terminal: terminalSettingsRef.current }).catch((error: unknown) => {
+        setFatalError(`终端设置保存失败：${error instanceof Error ? error.message : String(error)}`)
+      })
+    }, 300)
+  }, [])
+
+  /** 退出确认前把尚在去抖窗口里的终端偏好落盘，避免最后一次调整丢失。 */
+  const flushTerminalSettings = useCallback(async () => {
+    if (terminalSaveTimerRef.current !== null) {
+      window.clearTimeout(terminalSaveTimerRef.current)
+      terminalSaveTimerRef.current = null
+    }
+    try {
+      await window.workbench.settings.update({ terminal: terminalSettingsRef.current })
+    } catch (error) {
+      setFatalError(`终端设置保存失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }, [])
 
@@ -342,7 +379,7 @@ export default function App(): React.JSX.Element {
           onCancelQuit={() => setPendingQuit(null)}
           onConfirmQuit={() => {
             setPendingQuit(null)
-            void window.workbench.app.confirmQuit({ confirmed: true })
+            void flushTerminalSettings().then(() => window.workbench.app.confirmQuit({ confirmed: true }))
           }}
         />
       }
@@ -353,12 +390,12 @@ export default function App(): React.JSX.Element {
           sidebarOpen={sidebarOpen}
           restoreLastProject={restoreLastProject}
           editorPath={editorPath}
-          defaultShell={defaultShell}
+          terminal={terminalSettings}
           onToggleSidebar={toggleSidebar}
           onSetRestoreLastProject={(enabled) => void updateSettings({ restoreLastProject: enabled })}
           onConfigureEditor={() => void configureEditor()}
           onClearEditor={() => void clearEditor()}
-          onDefaultShellChange={(shell) => void updateSettings({ defaultShell: shell })}
+          onTerminalChange={applyTerminalSettings}
         />
       ) : null}
 
@@ -394,7 +431,8 @@ export default function App(): React.JSX.Element {
               }}
               onProjectChange={handleProjectChange}
               onTerminalRunningChange={handleTerminalRunningChange}
-              defaultShell={defaultShell}
+              terminalSettings={terminalSettings}
+              onTerminalSettingsChange={applyTerminalSettings}
               editorPath={editorPath}
             />
           </div>

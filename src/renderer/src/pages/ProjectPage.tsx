@@ -1,9 +1,25 @@
+import type { TerminalPreferences } from '@shared/terminal-settings'
 import type { GitSnapshot, ProjectPage as ProjectPageName, ProjectSummary, ProjectViewState } from '@shared/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ProjectContent } from '../components/ProjectContent'
 import { ProjectHeader } from '../components/ProjectHeader'
-import { clampPanelHeight, TerminalPanel, type TerminalTab } from '../components/TerminalPanel'
+import { clampPanelHeight, TerminalPanel } from '../components/TerminalPanel'
 import { useModalFocus } from '../hooks/useModalFocus'
+import {
+  isSessionActive,
+  resolveStartupDirectory,
+  summarizeSessions,
+  tabLabel,
+  type TerminalSessionState,
+  type TerminalTab
+} from '../terminal-model'
+
+/** 关闭标签与结束会话共用一次确认，避免运行中的命令被静默中断。 */
+interface PendingTerminalAction {
+  kind: 'close-tab' | 'end-session'
+  key: number
+  label: string
+}
 
 interface ProjectPageProps {
   project: ProjectSummary
@@ -15,8 +31,9 @@ interface ProjectPageProps {
   onProjectChange: (project: ProjectSummary) => void
   /** 上报终端会话状态，供侧边栏提示「哪个项目有终端在运行」 */
   onTerminalRunningChange: (projectId: string, running: boolean) => void
-  /** 终端默认 Shell（应用级偏好，来自设置页）；空串=按本机自动探测 */
-  defaultShell: string
+  /** 终端偏好（应用级，来自设置页）；外观即时生效，Shell／启动目录只影响新会话 */
+  terminalSettings: TerminalPreferences
+  onTerminalSettingsChange: (patch: Partial<TerminalPreferences>) => void
   /** 「用指定编辑器打开」所用的编辑器路径；null=未设置（设置页承载，G3b） */
   editorPath: string | null
 }
@@ -51,7 +68,8 @@ export function ProjectPage({
   onBack,
   onProjectChange,
   onTerminalRunningChange,
-  defaultShell,
+  terminalSettings,
+  onTerminalSettingsChange,
   editorPath
 }: ProjectPageProps): React.JSX.Element {
   const [page, setPage] = useState<ProjectPageName>('overview')
@@ -69,6 +87,13 @@ export function ProjectPage({
   const [terminalOpen, setTerminalOpen] = useState(false)
   /** 终端全屏：面板吃满主区，把终端当主视图用 */
   const [terminalMaximized, setTerminalMaximized] = useState(false)
+  /** 运行中标签的关闭／结束会话确认 */
+  const [pendingTerminalAction, setPendingTerminalAction] = useState<PendingTerminalAction | null>(null)
+  const { dialogRef: terminalDialogRef } = useModalFocus(pendingTerminalAction !== null, () =>
+    setPendingTerminalAction(null)
+  )
+  /** 未信任时用户原本要打开的目录；信任完成后按它创建，而不是一律回到项目根 */
+  const trustIntentRef = useRef('')
   /**
    * 用户是否已手动切换过终端面板的可见性。
    *
@@ -160,9 +185,9 @@ export function ProjectPage({
     void refreshHeaderSnapshot()
   }, [changeToken, refreshHeaderSnapshot, project.isGitRepository])
 
-  const runningTabCount = tabs.filter((tab) => tab.sessionId !== null).length
+  const runningTabCount = tabs.filter((tab) => tab.status === 'running').length
+  const activeSessionCount = tabs.filter((tab) => isSessionActive(tab.status)).length
   const terminalMounted = tabs.length > 0
-  const activeTab = tabs.find((tab) => tab.key === activeTabKey) ?? null
 
   /**
    * 会话存在即展开（界面重构三项·阶段 4）。
@@ -187,10 +212,11 @@ export function ProjectPage({
     hadTabsRef.current = hasTabs
   }, [tabs.length])
 
-  // 上报会话状态：侧边栏据此显示「终端运行中」
+  // 上报会话状态：侧边栏据此显示「终端运行中」；启动中也算活动会话，
+  // 关闭项目／退出应用时必须先确认，避免在启动窗口期静默中断。
   useEffect(() => {
-    onTerminalRunningChange(project.id, runningTabCount > 0)
-  }, [onTerminalRunningChange, project.id, runningTabCount])
+    onTerminalRunningChange(project.id, activeSessionCount > 0)
+  }, [activeSessionCount, onTerminalRunningChange, project.id])
 
   const updateTab = useCallback((key: number, patch: Partial<TerminalTab>) => {
     setTabs((current) => current.map((tab) => (tab.key === key ? { ...tab, ...patch } : tab)))
@@ -199,12 +225,43 @@ export function ProjectPage({
   const addTab = useCallback((relativePath: string) => {
     const key = tabKeyRef.current
     tabKeyRef.current += 1
-    setTabs((current) => [...current, { key, relativePath, sessionId: null, epoch: 0 }])
+    setTabs((current) => [
+      ...current,
+      {
+        key,
+        relativePath,
+        epoch: 0,
+        status: 'idle',
+        sessionId: null,
+        shell: null,
+        exitCode: null,
+        error: null
+      }
+    ])
     setActiveTabKey(key)
     setTerminalOpen(true)
   }, [])
 
-  const closeTab = useCallback(
+  /** 新建标签的默认落点：项目根或当前文件所在目录（设置页可切换）。 */
+  const terminalStartupPath = useCallback(
+    () => resolveStartupDirectory(terminalSettings.startupDirectory, filePath),
+    [filePath, terminalSettings.startupDirectory]
+  )
+
+  /** 所有创建入口共用的信任门；未信任时记住目标目录，信任完成后按原意创建。 */
+  const requestAddTab = useCallback(
+    (relativePath: string) => {
+      if (!project.trusted) {
+        trustIntentRef.current = relativePath
+        setTrustPrompt(true)
+        return
+      }
+      addTab(relativePath)
+    },
+    [addTab, project.trusted]
+  )
+
+  const closeTabNow = useCallback(
     (key: number) => {
       const target = tabs.find((tab) => tab.key === key)
       if (target !== undefined && target.sessionId !== null) {
@@ -223,6 +280,44 @@ export function ProjectPage({
     [tabs]
   )
 
+  /** 关闭标签：会话仍在运行或启动中时先确认，空闲／已退出的标签直接关闭。 */
+  const requestCloseTab = useCallback(
+    (key: number) => {
+      const target = tabs.find((tab) => tab.key === key)
+      if (target === undefined) return
+      if (isSessionActive(target.status)) {
+        setPendingTerminalAction({ kind: 'close-tab', key, label: tabLabel(target.relativePath) })
+        return
+      }
+      closeTabNow(key)
+    },
+    [closeTabNow, tabs]
+  )
+
+  const requestEndSession = useCallback(
+    (key: number) => {
+      const target = tabs.find((tab) => tab.key === key)
+      if (target === undefined || !isSessionActive(target.status)) return
+      setPendingTerminalAction({ kind: 'end-session', key, label: tabLabel(target.relativePath) })
+    },
+    [tabs]
+  )
+
+  const confirmTerminalAction = useCallback(() => {
+    const action = pendingTerminalAction
+    setPendingTerminalAction(null)
+    if (action === null) return
+    if (action.kind === 'close-tab') {
+      closeTabNow(action.key)
+      return
+    }
+    const target = tabs.find((tab) => tab.key === action.key)
+    if (target !== undefined && target.sessionId !== null) {
+      void window.workbench.terminal.dispose(target.sessionId)
+    }
+    updateTab(action.key, { status: 'exited', sessionId: null, exitCode: null, error: null })
+  }, [closeTabNow, pendingTerminalAction, tabs, updateTab])
+
   /**
    * 「终端」主按钮／Ctrl+`：有会话时切换面板可见性，没有会话时新建一个
    * （未信任项目先确认信任）。全屏态下先退出全屏，避免用户困在全屏里。
@@ -235,12 +330,8 @@ export function ProjectPage({
       setTerminalOpen((value) => !value)
       return
     }
-    if (!project.trusted) {
-      setTrustPrompt(true)
-      return
-    }
-    addTab('')
-  }, [addTab, project.trusted, tabs.length, terminalMaximized, terminalOpen])
+    requestAddTab(terminalStartupPath())
+  }, [requestAddTab, tabs.length, terminalMaximized, terminalOpen, terminalStartupPath])
 
   // 侧边栏开关：Ctrl/Cmd+B 是同类应用的通用快捷键。仅在当前项目可见时响应，
   // 否则每个已打开的项目都会同时切换一次。Ctrl+`（反引号）呼出终端面板，同理。
@@ -269,10 +360,12 @@ export function ProjectPage({
   }, [])
 
   const confirmTrust = useCallback(async () => {
+    const intendedPath = trustIntentRef.current
+    trustIntentRef.current = ''
     const result = await window.workbench.project.trust({ projectId: project.id, trusted: true })
     setTrustPrompt(false)
     if (result.project !== null) onProjectChange(result.project)
-    if (!result.cancelled) addTab('')
+    if (!result.cancelled) addTab(intendedPath)
   }, [addTab, onProjectChange, project.id])
 
   const toggleTrust = useCallback(async () => {
@@ -286,28 +379,25 @@ export function ProjectPage({
   /** 在指定目录新建标签。多标签已支持，不再需要替换现有会话。 */
   const openTerminalAt = useCallback(
     (relativePath: string) => {
-      if (!project.trusted) {
-        setTrustPrompt(true)
-        return
-      }
-      addTab(relativePath)
+      requestAddTab(relativePath)
     },
-    [addTab, project.trusted]
+    [requestAddTab]
   )
 
   /** 会话结束后在同一标签内重建（换一个 epoch 触发组件重挂载） */
   const restartTab = useCallback(
     (key: number) => {
-      updateTab(key, { sessionId: null, epoch: (tabs.find((tab) => tab.key === key)?.epoch ?? 0) + 1 })
+      updateTab(key, {
+        sessionId: null,
+        epoch: (tabs.find((tab) => tab.key === key)?.epoch ?? 0) + 1,
+        status: 'idle',
+        shell: null,
+        exitCode: null,
+        error: null
+      })
     },
     [tabs, updateTab]
   )
-
-  const endActiveSession = useCallback(() => {
-    if (activeTab === null || activeTab.sessionId === null) return
-    void window.workbench.terminal.dispose(activeTab.sessionId)
-    updateTab(activeTab.key, { sessionId: null })
-  }, [activeTab, updateTab])
 
   const handleNavigateProjectPath = useCallback((relativePath: string) => {
     setFilePath(relativePath)
@@ -336,13 +426,11 @@ export function ProjectPage({
     setTerminalMaximized(false)
   }, [])
 
-  const handleSessionChange = useCallback(
-    (key: number, sessionId: string | null) => updateTab(key, { sessionId }),
-    [updateTab]
-  )
+  const handleSessionStateChange = useCallback((key: number, state: TerminalSessionState) => {
+    setTabs((current) => current.map((tab) => (tab.key === key ? { ...tab, ...state } : tab)))
+  }, [])
 
-  const terminalStateLabel =
-    tabs.length === 0 ? '未创建' : runningTabCount > 0 ? `${runningTabCount} 个会话运行中` : `${tabs.length} 个标签`
+  const terminalStateLabel = summarizeSessions(tabs)
 
   return (
     <div className="project-page">
@@ -386,22 +474,22 @@ export function ProjectPage({
         <TerminalPanel
           projectId={project.id}
           projectName={project.displayName}
-          defaultShell={defaultShell}
           tabs={tabs}
           activeTabKey={activeTabKey}
           terminalOpen={terminalOpen}
           terminalMaximized={terminalMaximized}
           panelHeight={panelHeight}
-          runningTabCount={runningTabCount}
+          settings={terminalSettings}
           onPanelHeightChange={setPanelHeight}
           onToggleMaximized={toggleMaximized}
           onClosePanel={closeTerminalPanel}
-          onOpenTerminalAt={openTerminalAt}
-          onRestartTab={restartTab}
-          onEndActiveSession={endActiveSession}
+          onNewTab={() => requestAddTab(terminalStartupPath())}
           onSelectTab={setActiveTabKey}
-          onCloseTab={closeTab}
-          onSessionChange={handleSessionChange}
+          onRequestCloseTab={requestCloseTab}
+          onRequestEndSession={requestEndSession}
+          onRestartTab={restartTab}
+          onSettingsChange={onTerminalSettingsChange}
+          onSessionStateChange={handleSessionStateChange}
         />
       ) : null}
 
@@ -417,6 +505,26 @@ export function ProjectPage({
               </button>
               <button type="button" className="primary" onClick={() => void confirmTrust()}>
                 信任并创建终端
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingTerminalAction !== null ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="terminal-close-title">
+          <div className="modal" ref={terminalDialogRef}>
+            <h2 id="terminal-close-title">
+              {pendingTerminalAction.kind === 'close-tab' ? '关闭运行中的标签？' : '结束正在运行的会话？'}
+            </h2>
+            <p>「{pendingTerminalAction.label}」中的命令会被中断。终端输出会保留，但会话无法恢复。</p>
+            <p className="hint">如果只是暂时不用，可以点「收起」让会话继续在后台运行。</p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setPendingTerminalAction(null)}>
+                取消
+              </button>
+              <button type="button" className="danger" onClick={confirmTerminalAction}>
+                {pendingTerminalAction.kind === 'close-tab' ? '关闭标签' : '结束会话'}
               </button>
             </div>
           </div>
