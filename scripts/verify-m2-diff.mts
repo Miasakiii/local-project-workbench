@@ -61,7 +61,8 @@ async function buildFixtures(): Promise<void> {
   writeFileSync(join(repo, 'binary.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]))
   writeFileSync(join(repo, 'old-name.txt'), 'renamed content\n', 'utf8')
   await git(repo, ['add', '.'])
-  await git(repo, ['commit', '--quiet', '-m', '初始提交'])
+  // --no-verify：验证夹具必须不受本机全局 git hooks 影响
+  await git(repo, ['commit', '--no-verify', '--quiet', '-m', '初始提交'])
 
   // 未暂存：修改中间两行
   writeFileSync(

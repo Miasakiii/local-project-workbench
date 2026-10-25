@@ -43,7 +43,8 @@ try {
   writeFileSync(join(root, '已暂存.txt'), 'v1\n')
   writeFileSync(join(root, '原名 文件.txt'), 'v1\n')
   await git(root, ['add', '.'])
-  await git(root, ['commit', '-q', '-m', '初始提交'])
+  // --no-verify：验证夹具必须不受本机全局 git hooks 影响
+  await git(root, ['commit', '--no-verify', '-q', '-m', '初始提交'])
 
   writeFileSync(join(root, '已修改.txt'), 'v2\n')
   writeFileSync(join(root, '已暂存.txt'), 'v2\n')

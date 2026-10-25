@@ -54,7 +54,8 @@ async function buildFixtures(): Promise<void> {
   await git(repo, ['config', 'core.autocrlf', 'false'])
   writeFileSync(join(repo, 'a.txt'), 'a\n', 'utf8')
   await git(repo, ['add', 'a.txt'])
-  await git(repo, ['commit', '--quiet', '-m', '初始提交'])
+  // --no-verify：验证夹具必须不受本机全局 git hooks 影响
+  await git(repo, ['commit', '--no-verify', '--quiet', '-m', '初始提交'])
 
   await git(noHeadRepo, ['init', '--quiet'])
   await git(noHeadRepo, ['config', 'user.email', 'verify@example.com'])

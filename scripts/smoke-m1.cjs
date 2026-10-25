@@ -227,7 +227,8 @@ function runChild() {
     await runGit(['config', 'core.autocrlf', 'false'])
     fs.writeFileSync(path.join(projectDir, 'tracked.txt'), ['第一行', '第二行', '第三行', ''].join('\n'))
     await runGit(['add', 'tracked.txt', 'README.md'])
-    await runGit(['commit', '--quiet', '-m', '初始提交'])
+    // --no-verify：验证夹具必须不受本机全局 git hooks 影响
+    await runGit(['commit', '--no-verify', '--quiet', '-m', '初始提交'])
     // 未暂存：改两行
     fs.writeFileSync(path.join(projectDir, 'tracked.txt'), ['第一行已改', '第二行', '新增行', ''].join('\n'))
     // 已暂存：新增并暂存一个文件
