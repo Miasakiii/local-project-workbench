@@ -22,6 +22,7 @@ import { parseUnifiedDiff, synthesizeAddedDiff } from '../src/main/modules/git-d
 const keepFixture = process.argv.includes('--keep')
 const root = join(tmpdir(), 'workbench-m2-diff')
 const repo = join(root, 'repo')
+const nestedProject = join(repo, 'nested-project')
 const noHeadRepo = join(root, 'no-head-repo')
 
 const CHECKS: Array<{ name: string; pass: boolean; detail: string }> = []
@@ -49,6 +50,7 @@ async function statusOf(cwd: string): Promise<string> {
 async function buildFixtures(): Promise<void> {
   rmSync(root, { recursive: true, force: true })
   mkdirSync(repo, { recursive: true })
+  mkdirSync(nestedProject, { recursive: true })
   mkdirSync(noHeadRepo, { recursive: true })
 
   await git(repo, ['init', '--quiet'])
@@ -60,6 +62,8 @@ async function buildFixtures(): Promise<void> {
   writeFileSync(join(repo, 'to-delete.txt'), 'will be deleted\n', 'utf8')
   writeFileSync(join(repo, 'binary.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]))
   writeFileSync(join(repo, 'old-name.txt'), 'renamed content\n', 'utf8')
+  writeFileSync(join(repo, 'outside-boundary.txt'), 'old secret\n', 'utf8')
+  writeFileSync(join(nestedProject, 'inside.txt'), 'inside\n', 'utf8')
   await git(repo, ['add', '.'])
   // --no-verify：验证夹具必须不受本机全局 git hooks 影响
   await git(repo, ['commit', '--no-verify', '--quiet', '-m', '初始提交'])
@@ -84,6 +88,8 @@ async function buildFixtures(): Promise<void> {
   // 超大未跟踪文件
   const huge = Array.from({ length: MAX_DIFF_LINES + 500 }, (_, index) => `line ${index}`).join('\n')
   writeFileSync(join(repo, 'huge.txt'), `${huge}\n`, 'utf8')
+  // 登记项目为仓库子目录时，父级仓库文件的改动不得进入差异
+  writeFileSync(join(repo, 'outside-boundary.txt'), 'new secret\n', 'utf8')
 
   await git(noHeadRepo, ['init', '--quiet'])
   await git(noHeadRepo, ['config', 'user.email', 'verify@example.com'])
@@ -355,6 +361,19 @@ async function verifyRepository(): Promise<void> {
     '项目外路径被拒绝且区分于「无差异」',
     outside.stale === true && outside.error !== null && outside.hunks.length === 0,
     `stale=${String(outside.stale)} error=${String(outside.error)}`
+  )
+
+  const escapedOriginal = await fileDiff({
+    projectId: 'p',
+    projectRoot: nestedProject,
+    relativePath: 'inside.txt',
+    scope: 'unstaged',
+    originalPath: '../outside-boundary.txt'
+  })
+  check(
+    '重命名的原路径同样不得越过项目根',
+    escapedOriginal.stale === true && escapedOriginal.error !== null && escapedOriginal.hunks.length === 0,
+    `stale=${String(escapedOriginal.stale)} error=${String(escapedOriginal.error)} hunks=${escapedOriginal.hunks.length}`
   )
 
   const after = await statusOf(repo)

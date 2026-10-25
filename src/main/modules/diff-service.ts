@@ -160,12 +160,19 @@ export async function fileDiff(request: FileDiffRequest): Promise<FileDiff> {
   const resolution = resolveProjectPath(request.projectRoot, request.relativePath, { mustExist: false })
   if (!resolution.ok) return failedDiff(request, resolution.detail)
 
+  let originalPath: string | null = null
+  if (request.originalPath !== null && request.originalPath !== undefined) {
+    const originalResolution = resolveProjectPath(request.projectRoot, request.originalPath, { mustExist: false })
+    if (!originalResolution.ok) return failedDiff(request, originalResolution.detail)
+    originalPath = originalResolution.normalized
+  }
+
   const result = await queryFileDiff(
     request.projectId,
     request.projectRoot,
     resolution.normalized,
     request.scope,
-    request.originalPath ?? null
+    originalPath
   )
   if (result.error !== null) return result
 
