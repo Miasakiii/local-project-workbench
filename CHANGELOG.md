@@ -143,6 +143,12 @@
 ### 变更
 
 - **侧栏开合偏好迁出 localStorage**：侧栏开合从渲染层 `localStorage` 键 `workbench.sidebarOpen` 迁入应用设置存储（`settings.json` 的 `sidebarOpen` 字段，与终端偏好同一 `settings.update` 通道）；旧值一次性迁移——经设置通道写入成功后才清除原键，失败保留键、下次启动重试，不阻断启动；非法落盘值回落默认展开。渲染层不再有散落的 localStorage 键；新增 `tests/unit/sidebar-settings.test.mts` 并扩展 `app-settings` 单元用例（单元用例 101 → 108，覆盖率实测 91.64% 行 / 85.61% 分支 / 88.64% 函数）。
+- `.gitignore` 补充 `.workbuddy/`（WorkBuddy 本地分析记忆目录，与已忽略的 `.workbuddy-ai/` 同族），不再依赖本机 `.git/info/exclude`。
+
+### 移除
+
+- 删除 6 个零引用的 M0 阶段一次性验证探针脚本：`verify-backpressure-m0.cjs`、`verify-electron-pty.cjs`、`verify-pty.cjs`、`verify-session-lifecycle-m0.cjs`、`verify-terminal-m0.cjs`，以及仅被其调用的 `gen-output.cjs`。它们均不在任何 npm script、CI 或文档引用链上，探针结论早已沉淀进 README 与设计稿。
+- 收敛仅内部使用的过度导出：`terminal-settings.ts` 的 12 个枚举与区间常量（字体／光标样式／链接行为枚举、行高／字间距／对比度／回看上限的边界值）与 `terminal-model.ts` 的 3 个内部类型（`TerminalSessionStatus`／`TerminalEarlyEvents`／`TerminalKeyChord`）改为模块私有。全部仅在本文件内使用，公开契约（`TerminalPreferences`、`TerminalSessionState` 等）不变。
 
 ### 文档
 

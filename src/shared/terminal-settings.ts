@@ -9,16 +9,16 @@
 export const TERMINAL_SHELL_CHOICES = ['pwsh', 'powershell', 'cmd'] as const
 export type TerminalShellChoice = (typeof TERMINAL_SHELL_CHOICES)[number]
 
-export const TERMINAL_FONT_CHOICES = ['default', 'cascadia', 'consolas'] as const
+const TERMINAL_FONT_CHOICES = ['default', 'cascadia', 'consolas'] as const
 export type TerminalFontChoice = (typeof TERMINAL_FONT_CHOICES)[number]
 
-export const TERMINAL_CURSOR_STYLES = ['bar', 'block', 'underline'] as const
-export type TerminalCursorStyle = (typeof TERMINAL_CURSOR_STYLES)[number]
+const TERMINAL_CURSOR_STYLES = ['bar', 'block', 'underline'] as const
+type TerminalCursorStyle = (typeof TERMINAL_CURSOR_STYLES)[number]
 
-export const TERMINAL_LINK_BEHAVIORS = ['ask', 'always', 'off'] as const
-export type TerminalLinkBehavior = (typeof TERMINAL_LINK_BEHAVIORS)[number]
+const TERMINAL_LINK_BEHAVIORS = ['ask', 'always', 'off'] as const
+type TerminalLinkBehavior = (typeof TERMINAL_LINK_BEHAVIORS)[number]
 
-export const TERMINAL_DIRECTORY_MODES = ['root', 'current'] as const
+const TERMINAL_DIRECTORY_MODES = ['root', 'current'] as const
 export type TerminalDirectoryMode = (typeof TERMINAL_DIRECTORY_MODES)[number]
 
 export const TERMINAL_FONT_SIZE_DEFAULT = 14
@@ -26,21 +26,21 @@ export const TERMINAL_FONT_SIZE_MIN = 10
 export const TERMINAL_FONT_SIZE_MAX = 24
 
 export const TERMINAL_LINE_HEIGHT_DEFAULT = 1.4
-export const TERMINAL_LINE_HEIGHT_MIN = 1
-export const TERMINAL_LINE_HEIGHT_MAX = 2
+const TERMINAL_LINE_HEIGHT_MIN = 1
+const TERMINAL_LINE_HEIGHT_MAX = 2
 
 export const TERMINAL_LETTER_SPACING_DEFAULT = 0.2
-export const TERMINAL_LETTER_SPACING_MIN = 0
-export const TERMINAL_LETTER_SPACING_MAX = 2
+const TERMINAL_LETTER_SPACING_MIN = 0
+const TERMINAL_LETTER_SPACING_MAX = 2
 
 /** WCAG AAA（7:1）。低于它的前景色由 xterm 自动提亮。 */
 export const TERMINAL_MIN_CONTRAST_DEFAULT = 7
-export const TERMINAL_MIN_CONTRAST_MIN = 1
+const TERMINAL_MIN_CONTRAST_MIN = 1
 export const TERMINAL_MIN_CONTRAST_MAX = 21
 
 export const TERMINAL_SCROLLBACK_DEFAULT = 10000
 export const TERMINAL_SCROLLBACK_MIN = 1000
-export const TERMINAL_SCROLLBACK_MAX = 100000
+const TERMINAL_SCROLLBACK_MAX = 100000
 
 export interface TerminalPreferences {
   /** '' = 按本机自动探测；否则是 `TERMINAL_SHELL_CHOICES` 之一 */

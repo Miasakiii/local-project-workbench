@@ -2,7 +2,7 @@ import type { TerminalExitEvent } from '@shared/ipc'
 import type { TerminalDirectoryMode } from '@shared/terminal-settings'
 
 /** 会话状态机：idle → starting → running → exited / failed，重建后回到 idle。 */
-export type TerminalSessionStatus = 'idle' | 'starting' | 'running' | 'exited' | 'failed'
+type TerminalSessionStatus = 'idle' | 'starting' | 'running' | 'exited' | 'failed'
 
 export interface TerminalSessionState {
   status: TerminalSessionStatus
@@ -21,7 +21,7 @@ export interface TerminalTab extends TerminalSessionState {
   epoch: number
 }
 
-export interface TerminalEarlyEvents {
+interface TerminalEarlyEvents {
   data: string[]
   exit: TerminalExitEvent | null
 }
@@ -89,7 +89,7 @@ export type TerminalShortcut =
   | 'font-reset'
 
 /** 只依赖键盘事件里用到的字段，便于在 Node 单元测试与 xterm 处理器之间共用。 */
-export interface TerminalKeyChord {
+interface TerminalKeyChord {
   key: string
   ctrlKey: boolean
   metaKey: boolean
