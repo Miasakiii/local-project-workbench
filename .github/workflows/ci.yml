@@ -34,5 +34,7 @@ jobs:
       - name: 构建
         run: npm run build
 
-      - name: 完整验证套件
-        run: npm run verify:all
+      # verify:suites 只包含单元测试与集成套件；静态检查、类型检查与构建
+      # 已在上面的独立步骤完成，不再通过 verify:all 重复执行一遍。
+      - name: 单元测试与集成验证
+        run: npm run verify:suites

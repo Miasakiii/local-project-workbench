@@ -16,6 +16,12 @@ appId: com.miasakii.local-project-workbench
 productName: 本地项目工作台
 copyright: Copyright © 2026 miasakii
 
+# 未接入 electron-updater，因此显式关闭发布元数据生成：
+# 否则 electron-builder 会从 git remote 推断 GitHub publish，生成指向
+# 中文产物名的 latest.yml / app-update.yml，与实际安装包文件名不一致。
+# 接入自动更新时再改为 GitHub provider，并保持 artifactName 为 ASCII。
+publish: null
+
 directories:
   output: release
   buildResources: build
@@ -65,7 +71,7 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: ${productName}-${version}-setup.${ext}
+  artifactName: local-project-workbench-${version}-setup.${ext}
 
 nsis:
   oneClick: false

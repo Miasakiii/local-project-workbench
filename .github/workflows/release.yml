@@ -1,0 +1,61 @@
+name: Release
+
+# 只在版本标签上发布：标签必须与 package.json 的 version 完全一致（v<version>）。
+# 发布产物是 NSIS 安装包与 SHA256SUMS.txt；不生成自动更新元数据（publish: null）。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 完整验证
+        run: npm run verify:all
+
+      - name: 打包安装包
+        env:
+          # 仓库未配置证书时这两个值为空，electron-builder 按未签名处理。
+          # 配置 CSC_LINK（base64 PFX 或证书路径）与 CSC_KEY_PASSWORD 即可签名。
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npm run pack:win
+
+      - name: 校验标签与版本并生成 SHA256
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $expected = "v$($package.version)"
+          if ("${{ github.ref_name }}" -ne $expected) {
+            throw "标签 ${{ github.ref_name }} 与 package.json 版本 $expected 不一致"
+          }
+
+          $installer = Get-ChildItem release -Filter 'local-project-workbench-*-setup.exe' | Select-Object -First 1
+          if ($null -eq $installer) { throw '未找到安装包产物' }
+
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($installer.Name)" | Out-File -FilePath release/SHA256SUMS.txt -Encoding ascii
+          Get-Content release/SHA256SUMS.txt
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem release -Filter 'local-project-workbench-*-setup.exe' | ForEach-Object { $_.FullName })
+          $files += (Resolve-Path release/SHA256SUMS.txt).Path
+          gh release create "${{ github.ref_name }}" @files --title "${{ github.ref_name }}" --generate-notes --verify-tag

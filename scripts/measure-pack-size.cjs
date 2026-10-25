@@ -8,6 +8,11 @@
  * 用法：
  *   node scripts/measure-pack-size.cjs            # 测量 release/ 下的产物
  *   node scripts/measure-pack-size.cjs --json     # 额外输出机器可读汇总
+ *   node scripts/measure-pack-size.cjs --max-unpacked-mb=340
+ *   node scripts/measure-pack-size.cjs --max-installer-mb=110
+ *
+ * 体积门槛用于防止「功能没变、产物悄悄长胖」：超限以非零退出码失败，
+ * 而不是只在日志里留一个数字。
  *
  * 前置：先执行 `npm run pack:dir`（或 `npm run pack:win` 生成安装包）。
  */
@@ -21,6 +26,21 @@ const RELEASE = path.join(ROOT, 'release')
 /** 允许用 --dir=<路径> 指定其它产物目录（默认 release/win-unpacked）。 */
 const dirArg = process.argv.find((item) => item.startsWith('--dir='))
 const UNPACKED = dirArg === undefined ? path.join(RELEASE, 'win-unpacked') : path.resolve(dirArg.slice(6))
+
+/** 可选体积门槛（MB）；超限以退出码 1 失败。 */
+function readLimit(prefix) {
+  const arg = process.argv.find((item) => item.startsWith(prefix))
+  if (arg === undefined) return null
+  const value = Number(arg.slice(prefix.length))
+  if (!Number.isFinite(value) || value <= 0) {
+    console.error(`无法解析体积门槛：${arg}`)
+    process.exit(1)
+  }
+  return value
+}
+
+const MAX_UNPACKED_MB = readLimit('--max-unpacked-mb=')
+const MAX_INSTALLER_MB = readLimit('--max-installer-mb=')
 
 /** 目录或文件的字节数；目录递归累加。 */
 function sizeOf(target) {
@@ -134,14 +154,46 @@ function main() {
     console.log('\n安装包：尚未生成（运行 npm run pack:win 后此项才有值）')
   }
 
+  const failures = []
+  if (MAX_UNPACKED_MB !== null && total > MAX_UNPACKED_MB * 1024 * 1024) {
+    failures.push(`解包体积 ${mb(total)} MB 超过上限 ${MAX_UNPACKED_MB} MB`)
+  }
+  if (MAX_INSTALLER_MB !== null) {
+    if (installers.length === 0) {
+      failures.push(`未找到安装包，无法校验 ${MAX_INSTALLER_MB} MB 上限`)
+    } else {
+      for (const installer of installers) {
+        if (installer.bytes > MAX_INSTALLER_MB * 1024 * 1024) {
+          failures.push(`安装包 ${installer.name} 为 ${mb(installer.bytes)} MB，超过上限 ${MAX_INSTALLER_MB} MB`)
+        }
+      }
+    }
+  }
+
+  console.log('\n=== 体积门槛 ===')
+  if (MAX_UNPACKED_MB === null && MAX_INSTALLER_MB === null) {
+    console.log('未设置门槛（仅测量）')
+  } else {
+    for (const item of failures) console.error(`✗ ${item}`)
+    if (failures.length === 0) {
+      console.log(
+        `✓ 通过${MAX_UNPACKED_MB === null ? '' : `（解包 ≤ ${MAX_UNPACKED_MB} MB）`}${MAX_INSTALLER_MB === null ? '' : `（安装包 ≤ ${MAX_INSTALLER_MB} MB）`}`
+      )
+    }
+  }
+
   console.log('\n=== 机器可读汇总 ===')
   console.log(
     JSON.stringify({
       unpackedMB: mb(total),
       localesMB: fs.existsSync(locales) ? mb(sizeOf(locales)) : null,
-      installers: installers.map((item) => ({ name: item.name, MB: mb(item.bytes) }))
+      installers: installers.map((item) => ({ name: item.name, MB: mb(item.bytes) })),
+      limits: { unpackedMB: MAX_UNPACKED_MB, installerMB: MAX_INSTALLER_MB },
+      failures
     })
   )
+
+  if (failures.length > 0) process.exit(1)
 }
 
 main()
