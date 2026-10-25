@@ -12,6 +12,7 @@ import {
   shellDisplayName,
   summarizeSessions,
   tabLabel,
+  TerminalEarlyEventsBuffer,
   type TerminalTab
 } from '../../src/renderer/src/terminal-model'
 
@@ -53,6 +54,24 @@ test('快捷键：标签循环与字号调整', () => {
   }
   assert.equal(matchTerminalShortcut({ key: '0', ctrlKey: true, metaKey: false, shiftKey: false }), 'font-reset')
   assert.equal(matchTerminalShortcut({ key: 'r', ctrlKey: true, metaKey: false, shiftKey: true }), null)
+})
+
+test('终端早到事件按 sessionId 回放，丢弃其它会话与退出后的数据', () => {
+  const events = new TerminalEarlyEventsBuffer()
+  events.appendData('s1', 'first')
+  events.appendData('other', 'ignored')
+  events.appendData('s1', ' second')
+  assert.deepEqual(events.take('s1'), { data: ['first', ' second'], exit: null })
+  assert.equal(events.take('other'), null)
+
+  events.appendData('s2', 'bye')
+  events.recordExit('s2', { sessionId: 's2', exitCode: 2, signal: null })
+  events.appendData('s2', 'late')
+  assert.deepEqual(events.take('s2'), {
+    data: ['bye'],
+    exit: { sessionId: 's2', exitCode: 2, signal: null }
+  })
+  assert.equal(events.take('s2'), null)
 })
 
 test('会话状态机：启动中／运行中才算活动会话', () => {

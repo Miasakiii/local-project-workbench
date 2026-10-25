@@ -1,3 +1,4 @@
+import type { TerminalExitEvent } from '@shared/ipc'
 import type { TerminalDirectoryMode } from '@shared/terminal-settings'
 
 /** 会话状态机：idle → starting → running → exited / failed，重建后回到 idle。 */
@@ -18,6 +19,50 @@ export interface TerminalTab extends TerminalSessionState {
   relativePath: string
   /** 换一个 epoch 触发终端视图重挂载，用于在同一标签内重建会话 */
   epoch: number
+}
+
+export interface TerminalEarlyEvents {
+  data: string[]
+  exit: TerminalExitEvent | null
+}
+
+/**
+ * create 响应返回前到达的终端事件。
+ *
+ * 会话输出可能先于响应抵达渲染层，此时组件还不知道自己的 sessionId；先按事件自带的
+ * ID 缓存，绑定后一次性回放。一次绑定只保留目标会话，其余并发会话的事件随即丢弃。
+ */
+export class TerminalEarlyEventsBuffer {
+  private readonly pending = new Map<string, TerminalEarlyEvents>()
+
+  appendData(sessionId: string, data: string): void {
+    const current = this.pending.get(sessionId)
+    if (current === undefined) {
+      this.pending.set(sessionId, { data: [data], exit: null })
+      return
+    }
+    if (current.exit === null) current.data.push(data)
+  }
+
+  recordExit(sessionId: string, event: TerminalExitEvent): void {
+    const current = this.pending.get(sessionId)
+    if (current === undefined) {
+      this.pending.set(sessionId, { data: [], exit: event })
+      return
+    }
+    current.exit = event
+  }
+
+  take(sessionId: string): TerminalEarlyEvents | null {
+    const target = this.pending.get(sessionId) ?? null
+    this.pending.clear()
+    if (target === null) return null
+    return { data: [...target.data], exit: target.exit }
+  }
+
+  clear(): void {
+    this.pending.clear()
+  }
 }
 
 export interface TerminalSearchResults {

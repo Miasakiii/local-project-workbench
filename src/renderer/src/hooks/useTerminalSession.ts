@@ -13,6 +13,7 @@ import {
 } from '../components/terminal-appearance'
 import {
   matchTerminalShortcut,
+  TerminalEarlyEventsBuffer,
   type TerminalSearchHandle,
   type TerminalSearchResults,
   type TerminalSessionState,
@@ -114,6 +115,7 @@ export function useTerminalSession(options: UseTerminalSessionOptions): React.Re
     let disposed = false
     let fitTimer = 0
     let appearanceTimer = 0
+    const earlyEvents = new TerminalEarlyEventsBuffer()
 
     const report = (patch: Partial<TerminalSessionState>): void => {
       if (patch.status !== undefined) status = patch.status
@@ -229,13 +231,24 @@ export function useTerminalSession(options: UseTerminalSessionOptions): React.Re
     host.addEventListener('wheel', onWheel, { passive: false })
     host.addEventListener('mouseup', onMouseUp)
 
+    const writeExitNotice = (exitCode: number): void => {
+      term.write(`\r\n\x1b[90m[会话已结束，退出码 ${exitCode}]\x1b[0m\r\n`)
+    }
+
     const offData = window.workbench.terminal.onData((payload) => {
-      if (payload.sessionId === sessionId) term.write(payload.data)
+      if (payload.sessionId === sessionId) {
+        term.write(payload.data)
+      } else if (sessionId === null) {
+        earlyEvents.appendData(payload.sessionId, payload.data)
+      }
     })
 
     const offExit = window.workbench.terminal.onExit((payload) => {
-      if (payload.sessionId !== sessionId) return
-      term.write(`\r\n\x1b[90m[会话已结束，退出码 ${payload.exitCode}]\x1b[0m\r\n`)
+      if (payload.sessionId !== sessionId) {
+        if (sessionId === null) earlyEvents.recordExit(payload.sessionId, payload)
+        return
+      }
+      writeExitNotice(payload.exitCode)
       report({ status: 'exited', sessionId: null, exitCode: payload.exitCode, error: null })
     })
 
@@ -258,11 +271,27 @@ export function useTerminalSession(options: UseTerminalSessionOptions): React.Re
           void window.workbench.terminal.dispose(result.sessionId)
           return
         }
+        const early = earlyEvents.take(result.sessionId)
+        if (early !== null) {
+          for (const chunk of early.data) term.write(chunk)
+          if (early.exit !== null) {
+            writeExitNotice(early.exit.exitCode)
+            report({
+              status: 'exited',
+              sessionId: null,
+              shell: result.shell,
+              exitCode: early.exit.exitCode,
+              error: null
+            })
+            return
+          }
+        }
         report({ status: 'running', sessionId: result.sessionId, shell: result.shell, exitCode: null, error: null })
         fitIfVisible()
       })
       .catch((error: unknown) => {
         if (disposed) return
+        earlyEvents.clear()
         const message = error instanceof Error ? error.message : String(error)
         term.write(`\x1b[31m终端启动失败：${message}\x1b[0m\r\n`)
         report({ status: 'failed', sessionId: null, shell: null, exitCode: null, error: message })
@@ -273,6 +302,7 @@ export function useTerminalSession(options: UseTerminalSessionOptions): React.Re
 
     return () => {
       disposed = true
+      earlyEvents.clear()
       window.clearTimeout(fitTimer)
       window.clearTimeout(appearanceTimer)
       host.removeEventListener('wheel', onWheel)
